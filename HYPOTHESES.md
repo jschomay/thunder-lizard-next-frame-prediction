@@ -9,3 +9,5 @@ Status: 🟡 open · 🟢 supported · 🔴 refuted. Each one links to the journ
 | H3 | 2–4 past frames are needed to predict dino motion; 1 is enough for the player and terrain. | Sweep k ∈ {1,2,4}. Compare accuracy on dino cells. | 🟡 |
 | H4 | Warm-starting each stage from the previous stage's weights trains faster than starting from scratch. | Stage N from scratch vs. from the stage N-1 checkpoint. Compare loss curves. | 🟡 |
 | H5 | Sampling from the predicted probabilities (instead of argmax) gives believable lava spread over rollouts. | Compare lava growth stats between real and dreamed rollouts. | 🟡 |
+| H6 | A model trained only on random-bot play does poorly on human play. Mixing in heuristic-bot and human data fixes it. | Train on bot-only vs. mixed data. Evaluate on a held-out set of human play. | 🟡 |
+| H7 | Per-step accuracy doesn't predict human-judged "feel." Rollout metrics predict it better. | Blind side-by-side human ratings vs. automatic metrics across checkpoints. | 🟡 |

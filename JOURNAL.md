@@ -47,3 +47,11 @@ Out of scope for now: diffusion world models (GameNGen, DIAMOND).
 ### Open questions
 - Reuse the same model across stages? See H4.
 - How many past frames (k) are needed? See H3.
+
+## 2026-10-01 — Whiteboard review notes
+
+- **Tagline:** "Playing the game inside a neural net." Avoid the word "dream."
+- **Training data source (open):** expected to need human play. Plan: a **scripted heuristic bot** for volume, **human play recordings** as a smaller realistic set, and held-out evaluation, mixed. Concern: *distribution shift*. The model only learns situations that appear in its data, so a random bot that never levels up or reaches the map edge leaves those cases unlearned. See H6.
+- **Evaluation:** automatic metrics (changed-cell accuracy, rollout drift) plus **human "feel" judgments**. Plan a blind side-by-side test: "which one is the real game?" GameNGen used human raters the same way. See H7.
+- **Compute:** Mac MPS for small models. **Colab** for bigger runs (transformer, LLM fine-tune).
+- **Want next:** a page on precedents (World Models, GameNGen, DIAMOND, Genie): how they work and how they compare to this project. Each milestone needs its own detailed write-up.
