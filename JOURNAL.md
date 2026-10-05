@@ -160,3 +160,10 @@ Observations:
 The hand-written rule using 2 frames beats the 1-frame rule by 28 points, an early hint for H3. Where shift_rhythm's remaining 31% of errors come from (measured): **85% are timing errors** (it scrolled on the wrong tick: the hand-written rhythm logic is only approximate), 5% are the newly revealed edge row (unknowable), and 10% other. So most of the gap is *learnable*, and a model has a lot of room to beat the rule. *(Corrected: this first claimed the errors were "mostly the edge row", unmeasured.)* *(Baselines were run before the dino fix; only stage 1 is quoted here, and it's unaffected.)*
 
 **A learned model is worth something if it beats 68.6% dynamic accuracy on stage 1.**
+
+## 2026-10-05 — H3 run 1: k = 1 (stage 1, CNN 220k params, 5 epochs, 16 min)
+W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/q7xa1xgl
+- Val dynamic accuracy **never got above 22.6%** and ended at **6.7%**. It swung between 5% and 22%, with no upward trend after epoch 1. Exact-frame accuracy ended at 14%.
+- That's below *both* hand-written rules (1-frame rule 40.1%, 2-frame rule 68.6%) and below copy-last on exact frames (64.6%).
+- Consistent with H3 (one frame isn't enough), but **not conclusive until the k = 2 run under the same settings** finishes.
+- Unexplained so far: why it does worse than the 1-frame *rule*, and why the curve is so jumpy. Two guesses, both unverified: (a) with move/no-move a coin flip, the per-cell argmax blends the two outcomes into an inconsistent frame; (b) the learning rate is too high or constant, with no decay. To check, look at actual predicted frames, and compare with k = 2's curve shape.
