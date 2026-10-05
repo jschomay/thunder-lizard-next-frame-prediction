@@ -77,7 +77,7 @@ Sanity check on 50 stage-1 episodes:
 | NONE | 0.1% | 97% |
 | UP/RIGHT/DOWN/LEFT | 1.4–1.9% | 56–66% |
 
-A level-1 player moves only **every 3rd tick** (`turnsToSkip = 2`), and a key press is **buffered** until the next move tick. So about 60% of ticks with a key held change nothing, and about 3% of NONE ticks still move (a buffered press). **From a single frame, the model can't know whether this tick is a move tick.** It needs history to infer the movement phase. That makes H3 relevant from stage 1, not just for dinos. Prediction: k=1 plateaus around the move-or-not coin flip on scrolled cells, and k≥3 solves stage 1 almost completely.
+A level-1 player moves only **every 2nd tick**, and a key press is **buffered** until the next move tick. *(Correction: this first said "every 3rd tick", inferred from `turnsToSkip = 2` in the code. Measuring scroll in the recorded frames shows a strict every-other-tick pattern in both bot and human data: `.D.D.D.D`. Why the code yields 2 rather than 3 isn't confirmed yet.)* So about 60% of ticks with a key held change nothing, and about 3% of NONE ticks still move (a buffered press). **From a single frame, the model can't know whether this tick is a move tick.** It needs history to infer the movement phase. That makes H3 relevant from stage 1, not just for dinos. Prediction: k=1 plateaus around the move-or-not coin flip on scrolled cells, and k≥2 solves stage 1 almost completely.
 
 ### Whiteboard
 - Added the **Precedents** page (World Models, GameGAN, GameNGen, DIAMOND, Genie), with a comparison table and the ideas we're borrowing. GameGAN (NVIDIA 2020, Pac-Man) is the closest precedent.
@@ -87,3 +87,26 @@ A level-1 player moves only **every 3rd tick** (`turnsToSkip = 2`), and a key pr
 - Python environment (`uv`), then `notebooks/01-explore-frames.ipynb` to look at the data visually.
 - Milestone 2: copy-last-frame baseline and metrics.
 - A heuristic bot to replace the random walker (H6).
+
+## 2026-10-05 (later) — Recording your play; Python side; how-it-works tabs
+
+**Status check:** no model has been trained yet. Everything so far produces and checks *data*. The movement-rhythm finding came from measuring scroll in the recordings, not from training.
+
+### Recording human play
+- `cd game && npm run record` opens the game with `?record`. Each main-loop tick it stores `observe()` plus the key, using **the same encoder as the bot harness** (now in `game/src/recorder.ts`; the harness imports it). Output is byte-identical to before the refactor (verified).
+- A session saves to `data/human/ep_<timestamp>/` when you die, win, or close/reload the tab. A vite dev-server plugin writes the `.npy` files.
+- The action is the **last arrow keydown in the tick**, including key-repeat events, which is exactly what the game's movement system sees. Verified in Chrome: 30 key-repeat events over about 1 s became 16 LEFT ticks, and the recorded frames scroll left every other tick.
+- `window.recorder` in the console shows the live session (`recorder.actions.length`).
+- Gotcha: the player can die within about a second of spawning if a predator is close. That's real, so short sessions happen.
+
+### Python (uv)
+- `uv` installed. `pyproject.toml` declares the `tlfp` package with numpy, torch (Apple GPU/MPS works), matplotlib, jupyterlab, and wandb.
+- `tlfp/data.py`:
+  - `Episode` memory-maps `.npy` files, so they're read lazily.
+  - `FrameDataset` is the sliding window `(k frames, key) → next frame`, padding the first frames.
+  - `split_by_episode` holds out whole episodes so validation is honest.
+- `tlfp/export_viewer.py` exports episodes for the whiteboard Data tab.
+
+### Whiteboard
+- **How it works** tab: pipeline diagram (built vs planned), one tick in code, a real frame with hoverable numbers, the on-disk layout, and the Python pieces, including an interactive sliding-window strip over real ticks.
+- **Data** tab: replay any exported episode (bot or yours), with changed-cell outlines and a key-vs-change timeline.

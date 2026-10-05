@@ -1,0 +1,17 @@
+[project]
+name = "tlfp"
+version = "0.1.0"
+description = "Thunder Lizard frame prediction: learn the game's next frame from past frames + key input"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy",
+  "torch",
+  "matplotlib",
+  "jupyterlab",
+  "ipykernel",
+  "wandb",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
