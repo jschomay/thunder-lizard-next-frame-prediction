@@ -55,3 +55,35 @@ Out of scope for now: diffusion world models (GameNGen, DIAMOND).
 - **Evaluation:** automatic metrics (changed-cell accuracy, rollout drift) plus **human "feel" judgments**. Plan a blind side-by-side test: "which one is the real game?" GameNGen used human raters the same way. See H7.
 - **Compute:** Mac MPS for small models. **Colab** for bigger runs (transformer, LLM fine-tune).
 - **Want next:** a page on precedents (World Models, GameNGen, DIAMOND, Genie): how they work and how they compare to this project. Each milestone needs its own detailed write-up.
+
+## 2026-10-05 — Milestone 1: headless harness
+
+### What was built
+- `game/` is a **git submodule** of the game repo, on a local branch `headless` (not pushed). It has two changes:
+  1. `lavaTick()` extracted from the lava timer loop, so the harness can step lava manually.
+  2. **Perf fix:** the systems called `defineQuery` on every tick, which registers a new bitECS query each frame. Moving the queries to module level made one step go from **12 ms to 0.1 ms** (~120×). This bug also affects the browser game, which slows down the longer it runs; consider upstreaming the fix.
+- `harness/headless.ts`: `HeadlessGame` stubs out the DOM, sound, and display, disables the timer loops, and provides `step(key)` (one 70 ms main tick, with lava at its real 50 ms rate ≈ 1.4 lava ticks per step) and `observe()` (a 45×45 state grid centered on the player, zoom locked).
+- `harness/record.ts`: a sticky random-walk bot records episodes to `data/stage<N>/ep_<seed>/{obs.npy, actions.npy, meta.json}`.
+  - `obs` has shape `[T+1, 2, 45, 45]`. Layer 0 is the terrain class (8). Layer 1 is the entity class (42: player and NPC × level 1–5 × direction 4, plus skeleton). The vocabulary is fixed across all stages.
+  - Run: `cd game && npx vite-node --root .. ../harness/record.ts -- --stage 1 --episodes 200 --ticks 500`
+- **Determinism verified:** a given seed produces byte-identical data whether it's recorded alone or after other episodes. bitECS global state (entity ids and component arrays) is reset between episodes.
+- Throughput: about 1,200 ticks/s for stage 1. Setup (about 0.4 s for map generation) dominates. Current data: stage 1 has 100k ticks; stages 2–4 have about 10k each.
+
+### Finding: the input → movement delay is hidden state, even in stage 1
+Sanity check on 50 stage-1 episodes:
+
+| key | avg changed cells | ticks with no change |
+|---|---|---|
+| NONE | 0.1% | 97% |
+| UP/RIGHT/DOWN/LEFT | 1.4–1.9% | 56–66% |
+
+A level-1 player moves only **every 3rd tick** (`turnsToSkip = 2`), and a key press is **buffered** until the next move tick. So about 60% of ticks with a key held change nothing, and about 3% of NONE ticks still move (a buffered press). **From a single frame, the model can't know whether this tick is a move tick.** It needs history to infer the movement phase. That makes H3 relevant from stage 1, not just for dinos. Prediction: k=1 plateaus around the move-or-not coin flip on scrolled cells, and k≥3 solves stage 1 almost completely.
+
+### Whiteboard
+- Added the **Precedents** page (World Models, GameGAN, GameNGen, DIAMOND, Genie), with a comparison table and the ideas we're borrowing. GameGAN (NVIDIA 2020, Pac-Man) is the closest precedent.
+- Applied the tagline. The whiteboard server restarted on a new port, so earlier marks don't carry over; their content was logged in the previous entry.
+
+### Next
+- Python environment (`uv`), then `notebooks/01-explore-frames.ipynb` to look at the data visually.
+- Milestone 2: copy-last-frame baseline and metrics.
+- A heuristic bot to replace the random walker (H6).
