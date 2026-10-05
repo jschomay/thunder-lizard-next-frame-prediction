@@ -113,7 +113,7 @@ A level-1 player moves only **every 2nd tick**, and a key press is **buffered** 
 
 ## 2026-10-05 — First human data: 2 games (428 ticks)
 
-Both games ended with the player eaten by a predator at level 1 (score −1000, no prey eaten). They lasted 268 and 160 ticks (≈19 s and 11 s).
+In both games the player ate a level-1 dino and leveled up to 2 (at ticks 66 and 24). A predator then caught the player twice (2 → 1 → 0). Final score −1000 = +1000 for the level-up meal − 2 × 1000 for being caught. *(Corrected: this first said "no prey eaten", inferred from the final score and level. The recorded frames show the level changes.)* They lasted 268 and 160 ticks (≈19 s and 11 s).
 
 ### You vs the bot (stage 4, full game)
 | | You | Bot |
@@ -121,17 +121,42 @@ Both games ended with the player eaten by a predator at level 1 (score −1000, 
 | NONE ticks | **62%** | 21% |
 | key-run length (median) | **1 tick (taps)** | 14 ticks (holds) |
 | NONE-run length (median) | 2 | 13 |
-| DOWN share | **1%** | 21% |
+| DOWN share | 1% (spawn location) | 21% |
 | dinos in view (mean) | 3.8 | 4.2 |
 | nearest dino distance (median) | 12 | 14 |
 
 Observations:
 1. **You tap; the bot holds.** Typical input looks like `U..U.U....L..L.L.U.U`. When you do hold a key, the OS key-repeat shows up (`R..RRRRRRRRR`): a press, a short gap, then a key every tick. The bot never produces either pattern. **This is the distribution shift H6 is about,** concretely measured.
 2. **The input → movement delay is everywhere in your data.** At the start of a key press, the player moves on the *same* tick about half the time and on the *next* tick the other half (you: 38 vs 40; bot: 34 vs 55). Since you tap, the next tick is often NONE, so **many NONE ticks show movement**. With k = 1 the model sees "no key, yet the player moved" and can't explain it; with history it can (more support for H3).
-3. **Direction bias:** almost no DOWN (1%). Human-only data would barely teach downward scrolling. The bot covers it, which is an argument for mixing data sources.
+3. ~~Direction bias~~: only 1% DOWN, but that came from where the player spawned, not from play style. Not a real pattern.
 4. **Every game starts with an idle stretch** (about 15–22 NONE ticks during the intro zoom).
-5. **No eating or level-ups yet**, in either your data or the bot's. The model can't learn events it never sees, so those need deliberate coverage.
+5. **Eating and level-ups are rare:** one per human game. The random bot hasn't been checked for them yet. Rare events need deliberate coverage.
 
 ### Implications
 - Make the bot more human-like: a **"tapper" mode** that samples key-run and NONE-run lengths from your sessions, plus key-repeat-style holds (supports H6).
 - Coverage targets: eating smaller dinos, leveling up, lava deaths, and winning at the map edge. Either aim for these in human play, or give the heuristic bot a chase-prey behavior.
+
+## 2026-10-05 — Milestone 2: baselines and metrics; a harness bug found via human data
+
+### Bug: dino AI was mostly frozen in the harness
+`awarenessSystem` only runs for dinos **inside the game's viewport** (`level.getViewport()`). The harness had stubbed out the zoom animation, so the viewport stayed at its **6×6 intro size**, and almost no dinos ever noticed the player or prey. **Found because** the human data showed dino movement on 51% of non-scroll ticks versus 7% for the bot.
+- Fix (per your direction: "zoomed out all the time is fine, zooming in is just for effect"): the viewport is fixed at 45×45. The harness applies the intro zoom-out instantly and disables dynamic zoom. The in-game recorder also disables dynamic zoom while recording, so human and bot dino behavior match.
+- Stages 3–4 were regenerated. Stages 1–2 have no dinos and were verified byte-identical.
+- Your first 2 recorded games used dynamic zoom (viewport sometimes 39×39), so dino awareness there differed slightly. They're fine as data, but noted.
+- Lesson: anything stubbed in the harness can silently change game logic. **Human recordings double as a fidelity check on the harness.**
+
+### Metrics (`tlfp/metrics.py`)
+- `cell_acc` is about 98% for *any* baseline, so it's useless on its own.
+- `changed_acc` (accuracy on cells that really changed) turned out to be **gameable**. A baseline that scrolls on every key tick scored 93.6% while getting only 24% of frames exactly right, because invented changes aren't penalized.
+- Added **`dynamic_acc`**: accuracy over cells that changed in reality **or** in the prediction. This is now the **headline metric**.
+
+### Baselines (`tlfp/baselines.py`, stage-1 validation episodes)
+| baseline | history used | cell | **dynamic** | changed | exact frame |
+|---|---|---|---|---|---|
+| copy_last | – | 98.4% | **0.0%** | 0.0% | 64.6% |
+| shift_by_key (scroll every key tick) | 1 frame | 97.8% | **40.1%** | 93.6% | 24.2% |
+| shift_rhythm (scroll only if the last tick didn't move; handles the buffered key) | 2 frames | 99.3% | **68.6%** | 95.8% | 57.9% |
+
+The hand-written rule using 2 frames beats the 1-frame rule by 28 points, an early hint for H3. The remaining errors are mostly the newly revealed edge row, which no rule can know. *(Baselines were run before the dino fix; only stage 1 is quoted here, and it's unaffected.)*
+
+**A learned model is worth something if it beats 68.6% dynamic accuracy on stage 1.**

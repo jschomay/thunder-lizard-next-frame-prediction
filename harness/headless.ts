@@ -8,6 +8,7 @@ import movementSystem, { keypressCb } from "../game/src/systems/movement"
 import deplacementSystem from "../game/src/systems/displacement"
 import scoreSystem from "../game/src/systems/score"
 import { MAP_SIZE } from "../game/src/constants"
+import XY from "../game/src/xy"
 import type Dino from "../game/src/entities/dino"
 import { removeEntity, deleteWorld, resetGlobals } from "bitecs"
 import * as Components from "../game/src/components"
@@ -25,8 +26,15 @@ const sounds: any = new Proxy({}, { get: () => silent })
 
 // The real loops run on timers; headless stepping drives them instead.
 const proto = MainLevel.prototype as any
-for (const m of ["waterLoop", "lavaloop", "mainLoop", "zoomOut", "zoomIn", "dynamicZoom", "dinoSfx", "drawMap"]) {
+for (const m of ["waterLoop", "lavaloop", "mainLoop", "dinoSfx", "drawMap", "dynamicZoom"]) {
   proto[m] = () => { }
+}
+// Stay zoomed out at 45x45: the intro zoom-out is applied instantly and dynamic zoom-in
+// (a visual effect only) is off. The viewport matters for gameplay: dinos only run
+// awareness when inside it. The in-game recorder disables dynamic zoom too, so both match.
+proto.zoomOut = proto.zoomIn = function (this: MainLevel, size: XY, offset: XY) {
+  this.viewportSize = new XY(size.x, size.y)
+  this.viewportOffset = new XY(offset.x, offset.y)
 }
 
 export interface EpisodeOptions {
