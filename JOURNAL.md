@@ -167,3 +167,17 @@ W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/q7xa1xgl
 - That's below *both* hand-written rules (1-frame rule 40.1%, 2-frame rule 68.6%) and below copy-last on exact frames (64.6%).
 - Consistent with H3 (one frame isn't enough), but **not conclusive until the k = 2 run under the same settings** finishes.
 - Unexplained so far: why it does worse than the 1-frame *rule*, and why the curve is so jumpy. Two guesses, both unverified: (a) with move/no-move a coin flip, the per-cell argmax blends the two outcomes into an inconsistent frame; (b) the learning rate is too high or constant, with no decay. To check, look at actual predicted frames, and compare with k = 2's curve shape.
+
+## 2026-10-05 — H3 run 2: k = 2 (same settings, 19 min)
+W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/zj8n6xp0
+
+| | k = 1 | k = 2 |
+|---|---|---|
+| best val dynamic acc | 22.6% | **65.5%** (epoch 4.74) |
+| trend | flat and noisy from epoch 1 | rising steadily through epoch 4.7 |
+| best exact-frame acc | 19.9% | 46.5% |
+
+- **H3 supported.** The only difference between the runs is one extra past frame. With it, the model reaches 3× the dynamic accuracy and keeps improving; without it, it stalls.
+- k = 2 **hasn't beaten the hand-written 2-frame rule yet** (65.5% vs 68.6%), but it was still climbing.
+- **Training instability:** at the very last step the loss spiked (0.09, about 3× normal), and the final eval collapsed to 19.6% dynamic / 0% exact. Together with the jumpy k = 1 curve, this points at the optimizer settings. A constant learning rate of 1e-3 with no gradient clipping can kick a model out of a good spot. The script also only keeps the final weights, so the best point (65.5%) is lost.
+- Fixes before the next run: learning-rate warmup and cosine decay, gradient clipping, saving the best checkpoint by val dynamic accuracy, and more epochs.
