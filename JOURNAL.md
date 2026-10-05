@@ -157,6 +157,6 @@ Observations:
 | shift_by_key (scroll every key tick) | 1 frame | 97.8% | **40.1%** | 93.6% | 24.2% |
 | shift_rhythm (scroll only if the last tick didn't move; handles the buffered key) | 2 frames | 99.3% | **68.6%** | 95.8% | 57.9% |
 
-The hand-written rule using 2 frames beats the 1-frame rule by 28 points, an early hint for H3. The remaining errors are mostly the newly revealed edge row, which no rule can know. *(Baselines were run before the dino fix; only stage 1 is quoted here, and it's unaffected.)*
+The hand-written rule using 2 frames beats the 1-frame rule by 28 points, an early hint for H3. Where shift_rhythm's remaining 31% of errors come from (measured): **85% are timing errors** (it scrolled on the wrong tick: the hand-written rhythm logic is only approximate), 5% are the newly revealed edge row (unknowable), and 10% other. So most of the gap is *learnable*, and a model has a lot of room to beat the rule. *(Corrected: this first claimed the errors were "mostly the edge row", unmeasured.)* *(Baselines were run before the dino fix; only stage 1 is quoted here, and it's unaffected.)*
 
 **A learned model is worth something if it beats 68.6% dynamic accuracy on stage 1.**
