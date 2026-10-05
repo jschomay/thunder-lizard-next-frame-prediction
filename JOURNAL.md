@@ -110,3 +110,28 @@ A level-1 player moves only **every 2nd tick**, and a key press is **buffered** 
 ### Whiteboard
 - **How it works** tab: pipeline diagram (built vs planned), one tick in code, a real frame with hoverable numbers, the on-disk layout, and the Python pieces, including an interactive sliding-window strip over real ticks.
 - **Data** tab: replay any exported episode (bot or yours), with changed-cell outlines and a key-vs-change timeline.
+
+## 2026-10-05 — First human data: 2 games (428 ticks)
+
+Both games ended with the player eaten by a predator at level 1 (score −1000, no prey eaten). They lasted 268 and 160 ticks (≈19 s and 11 s).
+
+### You vs the bot (stage 4, full game)
+| | You | Bot |
+|---|---|---|
+| NONE ticks | **62%** | 21% |
+| key-run length (median) | **1 tick (taps)** | 14 ticks (holds) |
+| NONE-run length (median) | 2 | 13 |
+| DOWN share | **1%** | 21% |
+| dinos in view (mean) | 3.8 | 4.2 |
+| nearest dino distance (median) | 12 | 14 |
+
+Observations:
+1. **You tap; the bot holds.** Typical input looks like `U..U.U....L..L.L.U.U`. When you do hold a key, the OS key-repeat shows up (`R..RRRRRRRRR`): a press, a short gap, then a key every tick. The bot never produces either pattern. **This is the distribution shift H6 is about,** concretely measured.
+2. **The input → movement delay is everywhere in your data.** At the start of a key press, the player moves on the *same* tick about half the time and on the *next* tick the other half (you: 38 vs 40; bot: 34 vs 55). Since you tap, the next tick is often NONE, so **many NONE ticks show movement**. With k = 1 the model sees "no key, yet the player moved" and can't explain it; with history it can (more support for H3).
+3. **Direction bias:** almost no DOWN (1%). Human-only data would barely teach downward scrolling. The bot covers it, which is an argument for mixing data sources.
+4. **Every game starts with an idle stretch** (about 15–22 NONE ticks during the intro zoom).
+5. **No eating or level-ups yet**, in either your data or the bot's. The model can't learn events it never sees, so those need deliberate coverage.
+
+### Implications
+- Make the bot more human-like: a **"tapper" mode** that samples key-run and NONE-run lengths from your sessions, plus key-repeat-style holds (supports H6).
+- Coverage targets: eating smaller dinos, leveling up, lava deaths, and winning at the map edge. Either aim for these in human play, or give the heuristic bot a chase-prey behavior.
