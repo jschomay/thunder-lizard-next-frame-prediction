@@ -192,3 +192,24 @@ Still feasible: the signal is real, and the failures look like training setup ra
 3. **The loss is dominated by easy cells:** ~98% of cells never change, so averaged cross-entropy mostly rewards copying. Candidate fix: up-weight cells that changed. → H9
 4. **Make "copy" the default:** structure the model to predict *what changes* relative to the last frame (a residual or copy prior) instead of re-drawing every cell from scratch. → H10
 5. **Compute:** about 2.6 min per epoch for 250k params on stage 1 is slower than assumed. Try half precision, and use Colab for later stages. The full game will need far more compute than the early estimate.
+
+## 2026-10-06 — Run: k = 2 + training fixes + H9 (changed ×5) + H10 (copy prior), 10 epochs, 50 min
+W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/24sko1uj
+- **Stable:** no crash, steady curves. **Fast start:** 64.5% dynamic accuracy after 1 epoch (the previous run had 54%).
+- **Plateau:** best **67.1%** dynamic accuracy, still just under the hand-written rule (68.6%). Exact frames 50.6% (copy-last 64.6%). Accuracy on cells that really changed is 94.6%.
+- Took 50 minutes vs the estimated 35–40.
+
+### Where the errors are (validation, measured)
+| tick type | ticks | share of wrong cells |
+|---|---|---|
+| no real move, but model **invented a scroll** | 1,284 | **81%** |
+| real move, model moved too | 3,430 | 13% (mostly the unknowable edge row) |
+| real move, model missed it | 83 | 5.5% |
+| no move, model right | 5,203 | 0.6% |
+
+- **The model learned the rhythm:** only 59 of the invented scrolls are rhythm mistakes (the previous tick moved).
+- The other 1,225 are ticks where the player *tried* to move and **didn't**. The cell it pressed toward was **WATER (541) or OCEAN (428)** in 75% of cases, GRASS/JUNGLE/SHRUB in most of the rest.
+- Likely explanations (not yet verified): ocean blocks movement (the model hasn't learned that), and water slows movement (+2 turns skipped), giving a slower rhythm that 2 frames can't reveal. Changed-cell ×5 weighting (H9) may also bias the model toward predicting movement.
+- Next: check the game's movement rules for water/ocean; then compare k = 3–4 (slower water rhythm) and runs without ×5 weighting.
+
+**Predictions tab** live: model vs truth vs rule on held-out episodes.
