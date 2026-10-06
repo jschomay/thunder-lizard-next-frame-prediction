@@ -213,3 +213,9 @@ W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/24sko1uj
 - Next: check the game's movement rules for water/ocean; then compare k = 3–4 (slower water rhythm) and runs without ×5 weighting.
 
 **Predictions tab** live: model vs truth vs rule on held-out episodes.
+
+## 2026-10-06 — Review of the Predictions tab (with you)
+- Your read of the tab: errors are almost all **wrong timing** or **edge cells**. The scrolling itself looks close to perfect. The dynamic-accuracy number is harsh: one mistimed tick counts every scrolled cell (~150) as wrong, which is exactly why H7 (metrics vs feel) exists.
+- Edge cells come from procedural generation and don't need to be exact; they need to be *plausible*.
+- Movement rules confirmed by you: **ocean blocks the player; water slows the player.** If training can't get these, the rules could be simplified.
+- Open question → next experiment: in a rollout (model fed its own output), do newly revealed borders form island shapes or **smear**? Prediction: argmax smears (repeating the edge is the single most likely guess), and sampling (H5) or a generative model is needed for plausible new terrain.
