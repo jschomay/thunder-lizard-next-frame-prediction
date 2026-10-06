@@ -181,3 +181,14 @@ W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/zj8n6xp0
 - k = 2 **hasn't beaten the hand-written 2-frame rule yet** (65.5% vs 68.6%), but it was still climbing.
 - **Training instability:** at the very last step the loss spiked (0.09, about 3× normal), and the final eval collapsed to 19.6% dynamic / 0% exact. Together with the jumpy k = 1 curve, this points at the optimizer settings. A constant learning rate of 1e-3 with no gradient clipping can kick a model out of a good spot. The script also only keeps the final weights, so the best point (65.5%) is lost.
 - Fixes before the next run: learning-rate warmup and cosine decay, gradient clipping, saving the best checkpoint by val dynamic accuracy, and more epochs.
+
+## 2026-10-06 — Expectation vs reality after the first training runs
+
+**Predicted** at kickoff: stage 1 would reach "close to 100% accuracy in minutes", and k ≥ 2 would "solve stage 1 almost completely". **Actual:** 65.5% dynamic accuracy after 19 minutes, still below a 10-line hand-written rule. The *direction* was right (H3); the *difficulty* was underestimated.
+
+Still feasible: the signal is real, and the failures look like training setup rather than a dead end. Changes to the plan:
+1. **Training hygiene** (needed): LR warmup/decay, gradient clipping, best-checkpoint saving.
+2. **Look at predictions before tuning:** build a Predictions tab (model vs truth, wrong cells marked) so fixes target the real failure mode.
+3. **The loss is dominated by easy cells:** ~98% of cells never change, so averaged cross-entropy mostly rewards copying. Candidate fix: up-weight cells that changed. → H9
+4. **Make "copy" the default:** structure the model to predict *what changes* relative to the last frame (a residual or copy prior) instead of re-drawing every cell from scratch. → H10
+5. **Compute:** about 2.6 min per epoch for 250k params on stage 1 is slower than assumed. Try half precision, and use Colab for later stages. The full game will need far more compute than the early estimate.
