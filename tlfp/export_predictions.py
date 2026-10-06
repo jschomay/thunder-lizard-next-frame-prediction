@@ -49,4 +49,4 @@ def main(path: str, n_episodes: int = 2, max_ticks: int = 200):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], *(int(a) for a in sys.argv[2:]))
