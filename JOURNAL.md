@@ -260,3 +260,9 @@ W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/24sko1uj
 - **No weighting (cw = 1)** vs ×5: about the same dynamic accuracy (65.0% vs 65.9%), but a different trade-off. Fewer invented changes (exact frames 39% → 51%), more missed changes (changed acc 94% → 89%). The ×5 weighting tilts the model toward predicting change; it doesn't make it better overall.
 - Odd: both k = 2 runs invent a scroll on exactly the same 1,225 "tried to move, didn't" ticks. It looks like they learned the same simple rule (key pressed and the last tick didn't move → scroll).
 - Open: why ocean blocking isn't learned. The visual signal is right there. Possibly too few blocked examples relative to normal moves.
+
+## 2026-10-06 — Lava is slow but memoryless (measured, stage-2 data)
+Per-tick chance that a cell next to active lava becomes lava (non-scroll ticks): DIRT 11.5% (~9 ticks avg), GRASS 2.4% (~42), SHRUB 1.2% (~80), JUNGLE 0.7% (~140), WATER 0.2% (~450), BURNT 0%.
+- The game rolls fresh dice every tick, so spread is **memoryless**: the best prediction needs only the current frame, not 20+ frames of history. k = 4 is enough.
+- Implications: argmax will **freeze** lava (stay ≫ spread on every tick). **Per-cell sampling is the *correct* model for lava** (spread really is independent per cell), unlike scrolling terrain, where it produced static. Per-tick accuracy can't measure this. Use **calibration** (predicted odds vs the table above) and **rollout growth curves** (lava area over 100+ ticks, averaged over many runs, vs real).
+- Generate ~100k stage-2 ticks before training; spread events are rare.
