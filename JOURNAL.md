@@ -246,3 +246,17 @@ W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/24sko1uj
 - **Sampling "flutter"** kept as a possible fun secondary mode (smoother version: lower temperature, or correlated noise).
 - **Entities:** the player is the easy case of the dino problem (split probabilities, multiple instances, appear/disappear, stochastic AI). Design the entity output (H11) for dinos and validate it on the player.
 - **Priorities:** (1) water/ocean timing via short 3-epoch comparisons; (2) stage 2 lava (stochastic, tests H4 warm start); (3) stage 3 dinos with factored entity output, probably a U-Net; plus cheap side checks (continuity metric, browser speed).
+
+## 2026-10-06 — Short comparisons: k = 4 and no weighting (3 epochs each, ~15 min each)
+| run | k | changed weight | best dynamic | exact frame | changed acc |
+|---|---|---|---|---|---|
+| s1-3ep-k2-cw5 (control) | 2 | 5 | 65.9% | 39.3% | 94.3% |
+| **s1-3ep-k4-cw5** | **4** | 5 | **71.6%** | 45.9% | 94.9% |
+| s1-3ep-k2-cw1 | 2 | 1 | 65.0% | 50.6% | 88.8% |
+| *hand-written rule* | | | *68.6%* | *57.9%* | |
+
+- 🎉 **k = 4 is the first learned model to beat the hand-written rule** (71.6% vs 68.6%), in 3 epochs, also beating the 10-epoch k = 2 run (67.1%).
+- Error analysis on k = 4: invented scrolls toward **water fell 541 → 322 (−40%)**, consistent with water's slower rhythm needing more history. Toward **ocean barely changed (428 → 410)**: blocking isn't a history problem (the ocean cell is visible in the current frame), and the model still hasn't learned it. Missed real moves fell 83 → 20.
+- **No weighting (cw = 1)** vs ×5: about the same dynamic accuracy (65.0% vs 65.9%), but a different trade-off. Fewer invented changes (exact frames 39% → 51%), more missed changes (changed acc 94% → 89%). The ×5 weighting tilts the model toward predicting change; it doesn't make it better overall.
+- Odd: both k = 2 runs invent a scroll on exactly the same 1,225 "tried to move, didn't" ticks. It looks like they learned the same simple rule (key pressed and the last tick didn't move → scroll).
+- Open: why ocean blocking isn't learned. The visual signal is right there. Possibly too few blocked examples relative to normal moves.
