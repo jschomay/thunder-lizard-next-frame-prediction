@@ -1,0 +1,87 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>World Model Precedents</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f;--code:#f1efe9}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 80px}
+nav a{margin-right:14px;color:var(--acc)}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:12px 0}
+.card h3{margin:0 0 2px;font-size:17px}.meta{color:var(--mut);font-size:13px;margin-bottom:8px}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0;font-size:13px}
+.flow span{border:1.5px solid var(--fg);border-radius:5px;padding:3px 8px;background:var(--bg)}
+.flow i{color:var(--mut);font-style:normal}
+.take{border-left:4px solid var(--acc);padding:4px 10px;margin-top:8px;background:#f3f8f4}
+table{border-collapse:collapse;width:100%;font-size:13.5px}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+code{font-family:ui-monospace,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;font-size:13px}
+.wrap{overflow-x:auto}
+</style></head>
+<body><main>
+<nav style="margin-bottom:6px"><a href="index.html" style="margin-right:14px;color:#2f6f4f">Plan</a><a href="how.html" style="margin-right:14px;color:#2f6f4f">How it works</a><a href="data.html" style="margin-right:14px;color:#2f6f4f">Data</a><a href="predictions.html" style="margin-right:14px;color:#2f6f4f">Predictions</a><a href="precedents.html" style="margin-right:14px;color:#2f6f4f"><b>Precedents</b></a></nav>
+<h1>Precedents: neural game engines</h1>
+<p class="sub">Each of these learned to stand in for a game or environment from recorded play. This page covers how each worked, how it compares to Thunder Lizard, and which ideas we're borrowing. Mark anything.</p>
+
+<h2 data-wb="core-idea">The shared idea</h2>
+<div class="flow" data-wb="shared-loop"><span>frames so far</span><i>+</i><span>action</span><i>→</i><span>learned model</span><i>→</i><span>next frame</span><i>↺ fed back in</i></div>
+<p>The term for this is a <b>world model</b>. The projects differ in three ways: <b>what a frame is</b> (pixels, compressed codes, or symbols), <b>how the model generates</b> (one shot, or diffusion's gradual denoising), and <b>what the model is for</b> (training an AI agent inside it, or letting humans play it).</p>
+
+<div class="card" data-wb="p-worldmodels">
+<h3>World Models</h3><div class="meta">Ha &amp; Schmidhuber, 2018 · CarRacing, VizDoom</div>
+<div class="flow"><span>V: VAE squeezes a 64×64 frame into a small code <code>z</code></span><i>→</i><span>M: RNN predicts the next <code>z</code> as a probability mix</span><i>→</i><span>C: tiny controller picks actions</span></div>
+<p>The model never predicts pixels directly. It predicts in a compressed "latent" space and decodes to images only for viewing. The headline result: they trained the agent's controller <i>entirely inside the model</i>, then it worked in the real game. One lesson: the agent learned to exploit the model's mistakes, so they added a <b>temperature</b> knob that makes the model more random and therefore harder to cheat.</p>
+<div class="take">For us: our grid is already compact, so we skip the compression step. The temperature idea maps directly to sampling vs argmax (H5).</div>
+</div>
+
+<div class="card" data-wb="p-gamegan">
+<h3>GameGAN</h3><div class="meta">Kim et al. (NVIDIA), 2020 · Pac-Man, VizDoom</div>
+<div class="flow"><span>past frames + key</span><i>→</i><span>dynamics engine (LSTM)</span><i>⇄</i><span>memory module (remembers the map)</span><i>→</i><span>rendering engine: static layer + dynamic layer</span></div>
+<p>The <b>closest precedent to this project</b>: a 2D grid game, learned from frames and key presses, playable afterward. It used a GAN, a generator trained against a critic that tries to tell real frames from fake ones. Two ideas stand out. It had an explicit <b>memory</b>, so the maze stayed consistent when you came back to a spot. Its renderer separated the <b>static</b> background from <b>dynamic</b> sprites, which also let them swap in new backgrounds.</p>
+<div class="take">For us: our terrain/entity layers are the same static/dynamic split, given explicitly instead of learned. Its memory addresses a problem we have too: terrain scrolling back into view.</div>
+</div>
+
+<div class="card" data-wb="p-gamengen">
+<h3>GameNGen</h3><div class="meta">Valenzano et al. (Google), 2024 · DOOM at ~20 fps</div>
+<div class="flow"><span>RL agent plays DOOM → millions of frames + actions</span><i>→</i><span>fine-tuned Stable Diffusion, conditioned on the last 64 frames + actions</span><i>→</i><span>next frame, about 4 denoising steps</span></div>
+<p>A <b>diffusion</b> model starts from noise and refines it into an image over several steps. They started from a pretrained image model, which is the Hugging Face path for pixel games. Two lessons apply directly to us. First, the training data came from an <b>AI agent rewarded for playing like a human</b>, not random actions, because coverage matters (H6). Second, they added <b>noise to the context frames during training</b> so the model learned to correct its own small errors. That was the key fix for autoregressive drift. In short clips, human raters were only somewhat better than chance at telling real from generated.</p>
+<div class="take">For us: borrow context-noise augmentation for drift, the agent-generated data, and the blind human-rater evaluation (H7).</div>
+</div>
+
+<div class="card" data-wb="p-diamond">
+<h3>DIAMOND</h3><div class="meta">Alonso et al., NeurIPS 2024 · Atari, CS:GO</div>
+<div class="flow"><span>agent acts in the world model</span><i>→</i><span>diffusion model predicts the next frame directly in pixels</span><i>→</i><span>agent learns from imagined experience</span><i>↺ collect more real data</i></div>
+<p>A diffusion world model used mainly to <b>train agents</b>. The agent learns Atari games mostly inside the model, using only about 2 hours of real gameplay. Their finding: keeping visual detail (pixels instead of compressed codes) mattered for the agent's performance. They also released a playable CS:GO model trained on 87 hours of human play.</p>
+<div class="take">For us: they gave up fidelity on purpose to get speed and stability, and that tradeoff applies to our model too. A future extension would be training a bot <i>inside</i> our model, which would close the loop.</div>
+</div>
+
+<div class="card" data-wb="p-genie">
+<h3>Genie (1, 2, 3)</h3><div class="meta">DeepMind, 2024–2025 · 2D platformers → 3D worlds</div>
+<div class="flow"><span>video tokenizer</span><i>→</i><span>latent action model: infers which "button" caused each change</span><i>→</i><span>dynamics transformer predicts next tokens</span></div>
+<p>Trained on <b>internet videos with no key logs at all</b>. It <i>invents</i> a small set of discrete actions by noticing consistent kinds of change between frames, so after training you can "play" any image. Genie 1 had 11B parameters. Later versions produce interactive 3D worlds in real time.</p>
+<div class="take">For us: we have exact key logs, so we skip the hardest part. Its dynamics transformer over tokens is approach B at a very large scale.</div>
+</div>
+
+<h2 data-wb="comparison">How Thunder Lizard compares</h2>
+<div class="wrap"><table>
+<tr><th></th><th>Frame</th><th>Model</th><th>Data</th><th>Goal</th></tr>
+<tr><td>World Models</td><td>pixels → latent</td><td>VAE + RNN</td><td>random policy</td><td>train agent</td></tr>
+<tr><td>GameGAN</td><td>pixels</td><td>GAN + memory</td><td>agent play</td><td>playable game</td></tr>
+<tr><td>GameNGen</td><td>pixels (latent diffusion)</td><td>fine-tuned SD</td><td>RL agent</td><td>playable game</td></tr>
+<tr><td>DIAMOND</td><td>pixels</td><td>diffusion</td><td>agent + humans</td><td>train agent / play</td></tr>
+<tr><td>Genie</td><td>video tokens</td><td>transformer</td><td>unlabeled video</td><td>playable worlds</td></tr>
+<tr data-wb="row-ours"><td><b>Ours</b></td><td><b>45×45 symbolic state grid</b></td><td><b>CNN → transformer → LLM (compare)</b></td><td><b>heuristic bot + your play</b></td><td><b>playable game in browser</b></td></tr>
+</table></div>
+<p>Our niche: a symbolic grid makes this <b>1000× cheaper</b> than pixel world models. It runs on a laptop, so we can do controlled experiments, like an A/B/C architecture comparison, that are expensive at pixel scale.</p>
+
+<h2 data-wb="borrow">Ideas we're borrowing</h2>
+<ul>
+<li data-wb="b-noise"><b>Context noise augmentation</b> (GameNGen): corrupt some cells in input frames during training to reduce drift. Candidate H8.</li>
+<li data-wb="b-temp"><b>Temperature / sampling</b> (World Models): H5.</li>
+<li data-wb="b-agent"><b>Agent-generated data</b> (GameNGen, GameGAN): the heuristic bot, H6.</li>
+<li data-wb="b-memory"><b>Memory for revisited terrain</b> (GameGAN): a later fix for edge cells scrolling in.</li>
+<li data-wb="b-raters"><b>Blind human raters</b> (GameNGen): H7.</li>
+</ul>
+</main>
+<script src="whiteboard.js"></script>
+</body></html>

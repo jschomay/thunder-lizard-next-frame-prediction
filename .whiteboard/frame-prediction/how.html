@@ -1,0 +1,326 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How It Works</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f;--plan:#a35a12;--code:#f1efe9}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 80px}
+nav a{margin-right:14px;color:var(--acc)}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:36px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+h3{font-size:16px;margin:18px 0 6px}
+.sub{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:12px 0}
+pre{font-family:ui-monospace,Menlo,monospace;background:var(--code);border-radius:6px;padding:10px;overflow-x:auto;font-size:12.5px;line-height:1.35;margin:8px 0}
+code{font-family:ui-monospace,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;font-size:13px}
+.built{color:var(--acc);font-weight:600}.planned{color:var(--plan);font-weight:600}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.sw{display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:12.5px}.sw i{width:12px;height:12px;display:inline-block}
+canvas{image-rendering:pixelated;border-radius:4px;display:block}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
+.thumb{text-align:center;font-size:11.5px;color:var(--mut)}
+.thumb.ctx canvas{outline:3px solid #2f6f4f}.thumb.tgt canvas{outline:3px solid #a35a12}
+.btn{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--fg);background:var(--card);border-radius:4px;cursor:pointer}
+table{border-collapse:collapse;font-size:13.5px;width:100%}td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+svg text{font-family:system-ui,sans-serif}
+.svgwrap{overflow-x:auto}
+#cellinfo{font-family:ui-monospace,Menlo,monospace;font-size:13px;min-height:20px}
+</style></head>
+<body><main>
+<nav><a href="index.html">Plan</a><a href="how.html"><b>How it works</b></a><a href="data.html">Data</a><a href="predictions.html" style="margin-right:14px;color:#2f6f4f">Predictions</a><a href="precedents.html">Precedents</a></nav>
+<h1>How it works</h1>
+<p class="sub">Every part from the game to training, with the actual code and real recorded data. <span class="built">■ built</span> is working now; <span class="planned">■ planned</span> comes next. <b>No model has been trained yet</b>; everything so far produces and checks data.</p>
+
+
+<div class="card" data-wb="glossary" style="font-size:14px">
+<b>Glossary</b>
+<table style="margin-top:6px">
+<tr data-wb="g-k"><td><b>k</b></td><td>How many past frames the model sees. k = 2 means the current frame plus the one before it. More history lets it infer rhythm and motion (H3).</td></tr>
+<tr data-wb="g-batch"><td><b>batch (64)</b></td><td>How many examples go through the model at once. The model adjusts after each batch, using the average error.</td></tr>
+<tr data-wb="g-channel"><td><b>channel</b></td><td>One number per cell, like one color in an image. Our input has k × 50 + 5 channels per cell.</td></tr>
+<tr data-wb="g-onehot"><td><b>one-hot</b></td><td>A category written as a row of 0s with a single 1 (GRASS = slot 3 on).</td></tr>
+<tr data-wb="g-filter"><td><b>filter / conv layer</b></td><td>A small learned weight table (3×3 × channels) slid over the grid. Each filter produces one new feature channel. A layer has many filters.</td></tr>
+<tr data-wb="g-rf"><td><b>receptive field</b></td><td>How far a cell can "see" after stacking layers: 3×3, then 5×5, then 7×7, …</td></tr>
+<tr data-wb="g-hyper"><td><b>hyperparameters</b></td><td>The settings we choose (k, learning rate, epochs, batch size, loss weighting, width/depth), as opposed to the weights the model learns.</td></tr>
+<tr data-wb="g-weights"><td><b>weights</b></td><td>The numbers inside the filters. Training adjusts them. Everything else (sizes, k, batch) is chosen by us.</td></tr>
+</table></div>
+
+<h2 data-wb="pipeline">1. The whole pipeline</h2>
+<div class="svgwrap" data-wb="pipeline-diagram">
+<svg viewBox="0 0 960 380" width="960" height="380" role="img" aria-label="Pipeline diagram">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#555"/></marker></defs>
+<style>.b{fill:#fff;stroke:#2f6f4f;stroke-width:2;rx:8}.p{fill:#fff;stroke:#a35a12;stroke-width:2;stroke-dasharray:6 4;rx:8}.t{font-size:13px;font-weight:600}.s{font-size:11.5px;fill:#555}.l{stroke:#555;stroke-width:1.6;fill:none;marker-end:url(#ar)}.lane{font-size:12px;fill:#888;font-weight:600;letter-spacing:.05em}</style>
+<text x="10" y="18" class="lane">TYPESCRIPT (game + harness)</text>
+<text x="560" y="18" class="lane">FILES</text>
+<text x="700" y="18" class="lane">PYTHON (tlfp/)</text>
+<!-- human -->
+<rect class="b" x="10" y="30" width="200" height="62"/><text x="20" y="52" class="t">You play in the browser</text><text x="20" y="70" class="s">npm run dev → open ?record</text><text x="20" y="84" class="s">game/src/level.ts</text>
+<rect class="b" x="250" y="30" width="200" height="62"/><text x="260" y="52" class="t">Recorder</text><text x="260" y="70" class="s">each tick: observe() + key</text><text x="260" y="84" class="s">game/src/recorder.ts</text>
+<rect class="b" x="490" y="30" width="150" height="62"/><text x="500" y="52" class="t">data/human/</text><text x="500" y="70" class="s">saved by vite plugin</text><text x="500" y="84" class="s">on death / win / close</text>
+<path class="l" d="M210,61H248"/><path class="l" d="M450,61H488"/>
+<!-- bot -->
+<rect class="b" x="10" y="120" width="200" height="62"/><text x="20" y="142" class="t">Bot (sticky random walk)</text><text x="20" y="160" class="s">picks a key each tick</text><text x="20" y="174" class="s">harness/record.ts</text>
+<rect class="b" x="250" y="120" width="200" height="62"/><text x="260" y="142" class="t">HeadlessGame</text><text x="260" y="160" class="s">step(key) · observe()</text><text x="260" y="174" class="s">harness/headless.ts</text>
+<rect class="b" x="490" y="120" width="150" height="62"/><text x="500" y="142" class="t">data/stage1–4/</text><text x="500" y="160" class="s">obs.npy · actions.npy</text><text x="500" y="174" class="s">meta.json</text>
+<path class="l" d="M210,151H248"/><path class="l" d="M450,151H488"/>
+<text x="262" y="110" class="s">↑ same encoder (observe) in both paths</text>
+<!-- python -->
+<rect class="b" x="700" y="30" width="250" height="62"/><text x="710" y="52" class="t">Episode · find_episodes()</text><text x="710" y="70" class="s">memory-maps the .npy files</text><text x="710" y="84" class="s">tlfp/data.py</text>
+<rect class="b" x="700" y="120" width="250" height="62"/><text x="710" y="142" class="t">FrameDataset</text><text x="710" y="160" class="s">sliding window → (k frames, key, next)</text><text x="710" y="174" class="s">tlfp/data.py</text>
+<path class="l" d="M640,61H698"/><path class="l" d="M640,151C670,151 670,80 698,72"/><path class="l" d="M825,92V118"/>
+<rect class="p" x="700" y="210" width="250" height="62"/><text x="710" y="232" class="t">DataLoader → batches</text><text x="710" y="250" class="s">shuffle, stack 64 examples</text><text x="710" y="264" class="s">PyTorch built-in</text>
+<rect class="p" x="700" y="300" width="250" height="62"/><text x="710" y="322" class="t">Model + training loop</text><text x="710" y="340" class="s">CNN (A) first · logs to W&amp;B</text><text x="710" y="354" class="s">tlfp/model.py · tlfp/train.py</text>
+<path class="l" d="M825,182V208"/><path class="l" d="M825,272V298"/>
+<rect class="p" x="250" y="300" width="390" height="62"/><text x="260" y="322" class="t">Play in the net (browser)</text><text x="260" y="340" class="s">model exported to ONNX → runs in the page,</text><text x="260" y="354" class="s">its predictions drawn with the game's renderer</text>
+<path class="l" d="M700,331H642"/>
+<rect class="b" x="490" y="210" width="150" height="62"/><text x="500" y="232" class="t">Data viewer</text><text x="500" y="250" class="s">tlfp/export_viewer.py</text><text x="500" y="264" class="s">→ Data tab</text>
+<path class="l" d="M565,182V208"/>
+</svg></div>
+
+<h2 data-wb="tick">2. One tick: what a training example is made of</h2>
+<p>The real game runs a 70 ms loop. The harness runs the same loop body on demand, with no clock, so 1,000+ ticks per second.</p>
+<div class="row">
+<div class="card" style="flex:1 1 420px" data-wb="tick-code">
+<pre>// harness/headless.ts — HeadlessGame.step(key)
+if (key !== "NONE") keypressCb(...)   // same as a real keydown
+awarenessSystem(dinoWorld)            // dinos notice things
+movementSystem(dinoWorld)             // player + dinos move
+deplacementSystem(terrainWorld)       // trampled grass
+scoreSystem(dinoWorld)
+lavaClock += 70                        // lava ticks every 50 ms
+while (lavaClock >= 50) lavaTick()     //  → ~1.4 lava steps per tick</pre>
+</div>
+<div class="card" style="flex:1 1 360px" data-wb="tick-record">
+<pre>// harness/record.ts — one episode
+obs[0] = observe()
+for t in 0..T:
+  key        = bot.act()
+  actions[t] = key
+  step(key)
+  obs[t+1]   = observe()</pre>
+<p style="margin:6px 0 0">The data rule is <b><code>obs[t]</code> + <code>actions[t]</code> → <code>obs[t+1]</code></b>. The in-browser recorder follows it exactly; its "key" is the last arrow keydown that arrived during the tick.</p>
+</div></div>
+
+<h2 data-wb="encoding">3. What observe() produces: a real frame</h2>
+<p>45×45 cells centered on the player, as <b>two layers of integers</b>. Hover any cell to see its numbers. This is a real frame from <span id="srcname"></span>.</p>
+<div class="row">
+<div data-wb="frame-rendered"><canvas id="big"></canvas><div style="margin-top:4px"><button class="btn" onclick="layerMode='both';drawBig()">both layers</button> <button class="btn" onclick="layerMode='terrain';drawBig()">terrain only</button> <button class="btn" onclick="layerMode='entity';drawBig()">entity only</button></div></div>
+<div class="card" style="flex:1 1 300px;margin-top:0" data-wb="frame-numbers">
+<div id="cellinfo">hover a cell…</div>
+<pre id="numwin" style="font-size:12px"></pre>
+<p class="sub" style="margin:4px 0 0;font-size:13px">The 9×9 numbers around the hovered cell: top is the terrain layer, bottom is the entity layer. These are exactly what the model receives.</p>
+</div></div>
+<div id="legend" style="margin-top:6px"></div>
+<table style="margin-top:10px" data-wb="vocab-table">
+<tr><th>Layer</th><th>Values</th><th>Why this way</th></tr>
+<tr><td>0 terrain</td><td>0–7: OCEAN WATER DIRT GRASS SHRUB JUNGLE LAVA BURNT</td><td>Random glyph variants (≋ vs ≈) are collapsed into one class. A renderer brings the look back later.</td></tr>
+<tr><td>1 entity</td><td>0 empty · 1–20 player (level × facing) · 21–40 dino (level × facing) · 41 skeleton</td><td>Only the <b>body cell</b> is stored. The 5-cell drawing (head, legs, tail) is redrawn from position and facing.</td></tr>
+</table>
+
+<h2 data-wb="disk">4. On disk</h2>
+<pre data-wb="disk-layout">data/stage1/ep_00001/
+  obs.npy       uint8  [501, 2, 45, 45]   ← 501 frames × 2 layers × 45 × 45   (≈ 2 MB)
+  actions.npy   uint8  [500]              ← 0 NONE 1 UP 2 RIGHT 3 DOWN 4 LEFT
+  meta.json     {"seed": 1, "stage": 1, "numDinos": 0, "lava": false, "outcome": "timeout", ...}
+data/human/ep_2026-10-05T16-38-43-585Z/   ← same format, "source": "human", plus score / final level</pre>
+<p><code>.npy</code> is NumPy's own array file format: a small header giving the type and shape, then raw bytes. The TypeScript side writes it directly, so Python loads it with no conversion.</p>
+
+<h2 data-wb="python">5. The Python side, piece by piece</h2>
+
+<h3 data-wb="py-episode">5a. <span class="built">Episode</span>: load files without reading them</h3>
+<pre>ep = Episode.load("data/stage1/ep_00001")
+ep.obs      # np.load(..., mmap_mode="r")  → shape (501, 2, 45, 45)
+ep.actions  # shape (500,)</pre>
+<p><b>Memory-mapping</b> (<code>mmap_mode="r"</code>) means the OS reads bytes from disk only when a frame is actually used. The 500 MB of recordings can then be "opened" instantly, without loading them all into RAM.</p>
+
+<h3 data-wb="py-window">5b. <span class="built">FrameDataset</span>: the sliding window (k = 2 shown)</h3>
+<p>One training example = <span style="color:#2f6f4f;font-weight:600">k context frames</span> + the key at the last one → the <span style="color:#a35a12;font-weight:600">next frame</span>. Slide it one tick at a time across every episode. These are real consecutive ticks:</p>
+<div class="thumbs" id="thumbs" data-wb="window-strip"></div>
+<div style="margin:8px 0"><button class="btn" onclick="slide(-1)">◀ slide</button> <button class="btn" onclick="slide(1)">slide ▶</button> <label style="font-size:13px;margin-left:10px">k = <select id="ksel" onchange="renderThumbs()"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label> <span id="winlabel" class="sub" style="font-size:13px"></span></div>
+<pre>ds = FrameDataset(find_episodes("data/stage1", "data/human"), k=2)
+len(ds)                 # 100,085 examples  (one per tick of every episode)
+context, action, target = ds[100]
+context.shape  # (2, 2, 45, 45)   k frames × 2 layers × 45 × 45
+action         # 4  (LEFT)
+target.shape   # (2, 45, 45)</pre>
+<p><b>Why k &gt; 1?</b> In the strip above, notice that holding a key moves the player only <b>every other tick</b>. From one frame, the model can't tell whether this tick is a move tick. With two frames, it can see whether the last tick moved. That's H3. At the start of an episode there aren't k frames yet, so the first frame is repeated as padding.</p>
+
+<h3 data-wb="py-split">5c. <span class="built">split_by_episode</span>: honest validation</h3>
+<p>Validation data is held back to measure how well the model handles frames it has never seen. If we split <i>random ticks</i>, tick 41 could be in training and tick 42 in validation. They are nearly identical, so the score would be inflated. We hold out <b>whole episodes</b> instead. The same idea gives the human test set in H6: some of your sessions are never trained on.</p>
+
+<h3 data-wb="py-batch">5d. <span class="planned">DataLoader → one-hot → model</span></h3>
+<div class="svgwrap"><svg viewBox="0 0 960 150" width="960" height="150" role="img" aria-label="Tensor shapes through the model">
+<style>.sh{fill:#fff;stroke:#1d1d1b;stroke-width:1.5;rx:6}.st{font-size:12.5px;font-weight:600}.ss{font-size:11.5px;fill:#555;font-family:ui-monospace,Menlo,monospace}</style>
+<rect class="sh" x="5" y="20" width="170" height="70"/><text x="15" y="42" class="st">batch of contexts</text><text x="15" y="62" class="ss">[64, k, 2, 45, 45]</text><text x="15" y="78" class="ss">ints</text>
+<rect class="sh" x="200" y="20" width="185" height="70"/><text x="210" y="42" class="st">one-hot + stack</text><text x="210" y="62" class="ss">[64, k·50, 45, 45]</text><text x="210" y="78" class="ss">8 terrain + 42 entity ch.</text>
+<rect class="sh" x="410" y="20" width="170" height="70" style="stroke:#a35a12"/><text x="420" y="42" class="st">CNN (approach A)</text><text x="420" y="62" class="ss">+ key embedding</text><text x="420" y="78" class="ss">conv layers</text>
+<rect class="sh" x="605" y="20" width="170" height="70"/><text x="615" y="42" class="st">two output heads</text><text x="615" y="62" class="ss">[64, 8, 45, 45]</text><text x="615" y="78" class="ss">[64, 42, 45, 45]</text>
+<rect class="sh" x="800" y="20" width="150" height="70"/><text x="810" y="42" class="st">loss vs target</text><text x="810" y="62" class="ss">cross-entropy</text><text x="810" y="78" class="ss">per cell, per layer</text>
+<path d="M175,55H198M385,55H408M580,55H603M775,55H798" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="5" y="120" font-size="12.5" fill="#555">Each output head gives a score per class per cell, so the model says "this cell: 92% GRASS, 6% DIRT…" for terrain and separately for entities.</text>
+<text x="5" y="140" font-size="12.5" fill="#555">Training nudges the weights so the true class gets more probability. Every run's settings and loss curves go to Weights &amp; Biases.</text>
+</svg></div>
+<h3 data-wb="py-input-vector">5e. <span class="planned">What the model actually receives, per cell</span></h3>
+<p>The grid stays a grid. Frames, layers, and the key are <b>stacked as channels at each cell</b>, like an image where each pixel has 105 numbers instead of 3 (R, G, B). <b>Click any cell</b> to see its vector. The frames are real ticks (t−1 and t, k = 2) from the sliding-window example above.</p>
+<div class="row">
+<div data-wb="vec-grid"><canvas id="vgrid" style="cursor:crosshair"></canvas>
+<div style="margin-top:6px;font-size:13px">CNN layers stacked: <button class="btn" onclick="setDepth(-1)">−</button> <b id="depth">1</b> <button class="btn" onclick="setDepth(1)">+</button> → each output cell sees a <b id="rf">3×3</b> area</div></div>
+<div class="card" style="flex:1 1 360px;margin-top:0" data-wb="vec-detail">
+<div id="vcell" style="font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-bottom:6px"></div>
+<div id="vec"></div>
+<p class="sub" style="font-size:12.5px;margin:8px 0 0">Each square is one number in the cell's input: <b style="color:#1d1d1b">dark = 1</b>, light = 0. "One-hot" means exactly one square per group is on. That is how a category becomes numbers without implying LEFT is "bigger" than UP.</p>
+</div></div>
+<div class="card" data-wb="vec-shapes">
+<pre style="margin:0">per cell:   8 terrain(t−1) + 42 entity(t−1) + 8 terrain(t) + 42 entity(t) + 5 key  = 105
+whole input: 105 channels × 45 × 45      (k = 4 would be 4×50 + 5 = 205 channels)
+key:        the same 5 numbers copied into every cell. It has no position, so every cell "hears" it.
+            (Alternative to test later: FiLM, where the key adjusts features mid-network instead.)</pre></div>
+<p><b>The sliding window:</b> one CNN layer looks at a 3×3 patch, i.e. 9 cells × 105 numbers, and computes new features for the center cell. The <i>same</i> learned weights are reused at every position. Those weights encode rules like "player facing right, key RIGHT, grass to the right → the player will be there next." Stacking layers grows what each cell can "see" (press + above). About 10 layers covers ±10 cells, the distance at which dinos notice the player.</p>
+
+<h3 data-wb="py-filter">5f. <span class="planned">One filter, one position</span></h3>
+<p>This zooms into one step of one conv layer at the cell you clicked in 5e. To keep it readable, it shows only the <b>8 terrain channels of frame t</b>, 72 of the 9 × 105 = 945 real inputs. The weights here are a made-up example filter that responds to <b>"grass to the right"</b>. Real weights are learned.</p>
+<div class="row" data-wb="filter-demo">
+<div class="card" style="flex:1 1 300px;margin-top:0"><div class="sub" style="font-size:12.5px">3×3 patch around the cell (terrain classes)</div><pre id="fpatch" style="font-size:15px"></pre></div>
+<div class="card" style="flex:1 1 300px;margin-top:0"><div class="sub" style="font-size:12.5px">example filter weights, GRASS channel only (all other channels 0)</div><pre style="font-size:15px">  0.0  0.0  0.5
+  0.0  0.0  1.0
+  0.0  0.0  0.5</pre></div>
+<div class="card" style="flex:1 1 260px;margin-top:0"><div class="sub" style="font-size:12.5px">multiply matching numbers, add up</div><pre id="fsum" style="font-size:13px"></pre></div>
+</div>
+<p>That single number becomes this cell's value in the filter's output channel. The filter then slides to the next cell and repeats with <b>the same weights</b>. That gives a 45×45 map of "how much grass is to the right" everywhere. With 64 filters you get 64 such maps, and those are the input to the next layer.</p>
+
+<h2 data-wb="error-analysis">6. Error analysis: how the bugs were found</h2>
+<p>Error analysis is a standard practice: <b>slice the model's mistakes into categories, then slice the biggest category again</b>, until a pattern shows up. No labels are needed beyond what's already recorded (frames and keys). Each question comes from the previous answer. Run it on any checkpoint with <code>uv run python -m tlfp.error_analysis checkpoints/&lt;run&gt;.pt</code>. These are real numbers from <b>stage1-k2-fixes</b>:</p>
+<div class="svgwrap" data-wb="ea-funnel"><svg viewBox="0 0 960 330" width="960" height="330" role="img" aria-label="Error analysis funnel">
+<style>.q{font-size:13px;font-weight:600}.a{font-size:12px;fill:#444}.bx{fill:#fff;stroke:#1d1d1b;stroke-width:1.5;rx:6}.hot{fill:#fdecec;stroke:#d4202a;stroke-width:2;rx:6}.ar{stroke:#555;stroke-width:1.6;fill:none;marker-end:url(#ar)}</style>
+<text x="5" y="18" class="q">Q1. For each held-out tick: did reality scroll? did the model's guess scroll?</text>
+<rect class="hot" x="5" y="28" width="225" height="54"/><text x="15" y="48" class="q" fill="#d4202a">no move, model scrolled</text><text x="15" y="68" class="a">1,284 ticks · 81% of wrong cells</text>
+<rect class="bx" x="240" y="28" width="225" height="54"/><text x="250" y="48" class="q">real move, model scrolled</text><text x="250" y="68" class="a">3,430 ticks · 13% (mostly edge row)</text>
+<rect class="bx" x="475" y="28" width="225" height="54"/><text x="485" y="48" class="q">real move, model stayed</text><text x="485" y="68" class="a">83 ticks · 5.5%</text>
+<rect class="bx" x="710" y="28" width="225" height="54"/><text x="720" y="48" class="q">no move, model stayed</text><text x="720" y="68" class="a">5,203 ticks · 0.6%</text>
+<path class="ar" d="M117,84V118"/>
+<text x="5" y="112" class="q" transform="translate(130,0)">Q2. Invented scrolls: did the player move on the previous tick?</text>
+<rect class="bx" x="5" y="124" width="300" height="54"/><text x="15" y="144" class="q">yes: rhythm mistake</text><text x="15" y="164" class="a">59 ticks. The rhythm is learned.</text>
+<rect class="hot" x="320" y="124" width="300" height="54"/><text x="330" y="144" class="q" fill="#d4202a">no: tried to move and didn't</text><text x="330" y="164" class="a">1,225 ticks</text>
+<path class="ar" d="M470,180V214"/>
+<text x="5" y="208" class="q" transform="translate(485,0)">Q3. What terrain is in the key's direction?</text>
+<rect class="hot" x="320" y="220" width="150" height="54"/><text x="330" y="240" class="q" fill="#d4202a">WATER 541</text><text x="330" y="260" class="a">slows the player</text>
+<rect class="hot" x="480" y="220" width="150" height="54"/><text x="490" y="240" class="q" fill="#d4202a">OCEAN 428</text><text x="490" y="260" class="a">blocks the player</text>
+<rect class="bx" x="640" y="220" width="295" height="54"/><text x="650" y="240" class="q">GRASS / JUNGLE / SHRUB / … 256</text><text x="650" y="260" class="a">not yet explained</text>
+<text x="5" y="305" class="a" style="font-size:13px">→ Conclusion: the remaining errors are mostly water's slower rhythm (invisible with 2 frames → try k = 4) and ocean blocking. It's not a vision or scrolling problem.</text>
+</svg></div>
+<p><b>Why do this instead of just training longer?</b> It tells you <i>which</i> setting to change. Here it says "more history" (k), not "wider view" (U-Net) and not "more data". That saves many blind training runs.</p>
+
+</main>
+<script src="grid.js"></script>
+<script>
+let EP = null, T = 30, layerMode = "both";
+fetch("episodes.json").then(r => r.json()).then(eps => {
+  EP = eps.find(e => e.name.startsWith("stage3")) || eps[0];
+  const human = eps.find(e => e.name.startsWith("human") && e.actions.length > 40);
+  window.WIN_EP = human || eps.find(e => e.name.startsWith("stage1"));
+  window.W = WIN_EP.actions.findIndex(a => a !== "NONE");
+  if (W < 0) W = 0;
+  document.getElementById("srcname").textContent = EP.name;
+  document.getElementById("legend").innerHTML = legendHTML();
+  drawBig(); renderThumbs(); vecSetup();
+});
+function drawBig() {
+  const c = document.getElementById("big");
+  const t = EP.terrain[T], e = EP.entity[T];
+  drawGrid(c, layerMode === "entity" ? "3".repeat(2025) : t, layerMode === "terrain" ? "0".repeat(2025) : e, { cell: 9 });
+}
+document.getElementById("big").addEventListener("mousemove", ev => {
+  const r = ev.target.getBoundingClientRect(), x = Math.floor((ev.clientX - r.left) / 9), y = Math.floor((ev.clientY - r.top) / 9);
+  if (x < 0 || y < 0 || x > 44 || y > 44) return;
+  const i = y * 45 + x, tv = +EP.terrain[T][i], ev2 = B36.indexOf(EP.entity[T][i]), d = decodeEntity(ev2);
+  document.getElementById("cellinfo").textContent = `cell (${x},${y})  terrain=${tv} ${TERRAIN_NAMES[tv]}  entity=${ev2}` + (d ? ` ${d.kind}${d.level ? " L" + d.level + " " + DIR_ARROWS[d.dir] : ""}` : "");
+  let s = "";
+  for (const layer of ["t", "e"]) {
+    for (let yy = y - 4; yy <= y + 4; yy++) {
+      for (let xx = x - 4; xx <= x + 4; xx++) {
+        if (xx < 0 || yy < 0 || xx > 44 || yy > 44) { s += "  ·"; continue; }
+        const j = yy * 45 + xx, v = layer === "t" ? +EP.terrain[T][j] : B36.indexOf(EP.entity[T][j]);
+        s += (xx === x && yy === y ? "[" : " ") + String(v).padStart(2) ;
+      }
+      s += "\n";
+    }
+    s += layer === "t" ? "\n" : "";
+  }
+  document.getElementById("numwin").textContent = s;
+});
+
+// ---- 5e: per-cell input vector ----
+let VX = 22, VY = 22, DEPTH = 1;
+const VC = 7;
+function vecSetup() {
+  const c = document.getElementById("vgrid");
+  c.onclick = ev => { const r = c.getBoundingClientRect(); VX = Math.floor((ev.clientX - r.left) / VC); VY = Math.floor((ev.clientY - r.top) / VC); vecDraw(); };
+  vecDraw();
+}
+function setDepth(d) { DEPTH = Math.max(1, Math.min(12, DEPTH + d)); vecDraw(); }
+function vecDraw() {
+  const ep = WIN_EP, t = Math.max(1, W), c = document.getElementById("vgrid");
+  drawGrid(c, ep.terrain[t], ep.entity[t], { cell: VC });
+  const g = c.getContext("2d"), r = DEPTH;  // receptive field radius = depth for 3x3 convs
+  g.fillStyle = "rgba(255,255,255,.22)"; g.fillRect((VX - r) * VC, (VY - r) * VC, (2 * r + 1) * VC, (2 * r + 1) * VC);
+  g.strokeStyle = "#fff"; g.lineWidth = 2; g.strokeRect((VX - r) * VC, (VY - r) * VC, (2 * r + 1) * VC, (2 * r + 1) * VC);
+  g.strokeStyle = "#000"; g.lineWidth = 2; g.strokeRect(VX * VC, VY * VC, VC, VC);
+  document.getElementById("depth").textContent = DEPTH;
+  document.getElementById("rf").textContent = `${2 * r + 1}×${2 * r + 1}`;
+  const i = VY * 45 + VX, key = ep.actions[t];
+  const groups = [
+    ["terrain, frame t−1", 8, +ep.terrain[t - 1][i], v => TERRAIN_NAMES[v]],
+    ["entity, frame t−1", 42, B36.indexOf(ep.entity[t - 1][i]), entName],
+    ["terrain, frame t", 8, +ep.terrain[t][i], v => TERRAIN_NAMES[v]],
+    ["entity, frame t", 42, B36.indexOf(ep.entity[t][i]), entName],
+    ["key (same in every cell)", 5, ["NONE", "UP", "RIGHT", "DOWN", "LEFT"].indexOf(key), v => ["NONE", "UP", "RIGHT", "DOWN", "LEFT"][v]],
+  ];
+  filterDraw();
+  document.getElementById("vcell").textContent = `cell (${VX},${VY}) · tick ${t} · 105 numbers`;
+  document.getElementById("vec").innerHTML = groups.map(([label, n, on, name]) =>
+    `<div style="margin:4px 0"><div style="font-size:12px;color:#6b6a65">${label}: <b style="color:#1d1d1b">${name(on)}</b> (slot ${on})</div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:1px;margin-top:2px">` +
+    Array.from({ length: n }, (_, j) => `<span title="slot ${j}" style="width:9px;height:9px;display:inline-block;background:${j === on ? "#1d1d1b" : "#e4e1d8"}"></span>`).join("") +
+    `</div></div>`).join("");
+}
+
+function filterDraw() {
+  const ep = WIN_EP, t = Math.max(1, W), W3 = [[0,0,.5],[0,0,1],[0,0,.5]];
+  let patch = "", terms = [], sum = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = VX + dx, y = VY + dy;
+      const v = (x < 0 || y < 0 || x > 44 || y > 44) ? -1 : +ep.terrain[t][y * 45 + x];
+      patch += (v < 0 ? "  pad " : TERRAIN_NAMES[v].padEnd(6).slice(0, 6) + " ");
+      const w = W3[dy + 1][dx + 1], isGrass = v === 3 ? 1 : 0;
+      if (w) { terms.push(`${w} × ${isGrass} (${v < 0 ? "pad" : TERRAIN_NAMES[v]})`); sum += w * isGrass; }
+    }
+    patch += "\n";
+  }
+  document.getElementById("fpatch").textContent = patch;
+  document.getElementById("fsum").textContent = terms.join("\n+ ") + `\n─────────────\n= ${sum}   (max 2.0: grass all down the right side)`;
+}
+
+function entName(v) { const d = decodeEntity(v); return !d ? "empty" : d.kind === "skeleton" ? "skeleton" : `${d.kind} L${d.level} ${DIR_ARROWS[d.dir]}`; }
+
+function slide(d) { W = Math.max(0, Math.min(WIN_EP.actions.length - 1, W + d)); renderThumbs(); vecDraw(); }
+function renderThumbs() {
+  const k = +document.getElementById("ksel").value, box = document.getElementById("thumbs");
+  box.innerHTML = "";
+  const start = Math.max(0, W - 5), end = Math.min(WIN_EP.actions.length, W + 4);
+  for (let t = start; t <= end; t++) {
+    const inCtx = t > W - k && t <= W, isTgt = t === W + 1;
+    const div = document.createElement("div");
+    div.className = "thumb" + (inCtx ? " ctx" : "") + (isTgt ? " tgt" : "");
+    const c = document.createElement("canvas");
+    const prev = t > 0 ? WIN_EP.terrain[t - 1] + WIN_EP.entity[t - 1] : null;
+    drawGrid(c, WIN_EP.terrain[t], WIN_EP.entity[t], { cell: 2 });
+    const moved = prev && (prev !== WIN_EP.terrain[t] + WIN_EP.entity[t]);
+    div.appendChild(c);
+    div.insertAdjacentHTML("beforeend", `t=${t}<br>key: <b>${t < WIN_EP.actions.length ? WIN_EP.actions[t] : "—"}</b><br>${t === 0 ? "" : moved ? "changed" : "<span style='color:#a35a12'>no change</span>"}${inCtx ? "<br><b style='color:#2f6f4f'>context</b>" : ""}${isTgt ? "<br><b style='color:#a35a12'>target</b>" : ""}`);
+    box.appendChild(div);
+  }
+  document.getElementById("winlabel").textContent = `example: frames ${Math.max(0, W - k + 1)}..${W} + key ${WIN_EP.actions[W]} → frame ${W + 1}   (${WIN_EP.name})`;
+}
+</script>
+<script src="whiteboard.js"></script>
+</body></html>

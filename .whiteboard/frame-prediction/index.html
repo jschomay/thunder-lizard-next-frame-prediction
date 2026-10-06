@@ -1,0 +1,116 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thunder Lizard Frame Prediction</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f;--warn:#a35a12;--code:#f1efe9}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 80px}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 10px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:10px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch}
+.box{flex:1 1 150px;background:var(--card);border:1.5px solid var(--fg);border-radius:6px;padding:10px;font-size:13.5px}
+.box b{display:block;font-size:14.5px;margin-bottom:3px}
+.arrow{align-self:center;font-size:22px;color:var(--mut)}
+pre,code{font-family:ui-monospace,Menlo,monospace;background:var(--code);border-radius:4px}
+pre{padding:10px;overflow-x:auto;font-size:13px;line-height:1.25}code{padding:1px 4px;font-size:13px}
+.grid{display:grid;gap:1px;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1}
+.grid span{width:16px;height:16px;display:flex;align-items:center;justify-content:center}
+table{border-collapse:collapse;width:100%;font-size:13.5px}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+.warn{border-left:4px solid var(--warn)}.good{border-left:4px solid var(--acc)}
+.steps button{font:inherit;padding:4px 12px;border:1px solid var(--fg);background:var(--card);border-radius:4px;cursor:pointer}
+.tag{display:inline-block;font-size:12px;padding:1px 6px;border-radius:10px;background:var(--code);margin-right:4px}
+</style></head>
+<body><main>
+<nav style="margin-bottom:6px"><a href="index.html" style="margin-right:14px;color:#2f6f4f"><b>Plan</b></a><a href="how.html" style="margin-right:14px;color:#2f6f4f">How it works</a><a href="data.html" style="margin-right:14px;color:#2f6f4f">Data</a><a href="predictions.html" style="margin-right:14px;color:#2f6f4f">Predictions</a><a href="precedents.html" style="margin-right:14px;color:#2f6f4f">Precedents</a></nav>
+<h1>Predicting Thunder Lizard frames</h1>
+<p class="sub">Can a neural net learn to be the game engine? Given the last frame(s) and the key you pressed, it draws the next frame. Draw or comment on anything below.</p>
+
+<h2 data-wb="big-picture">1. The big picture</h2>
+<p style="margin:0 0 8px"><b>Tagline:</b> <i>Playing the game inside a neural net.</i></p>
+<div class="row" data-wb="pipeline">
+  <div class="box" data-wb="stage-harness"><b>① Headless harness</b>Run the real game in Node with no browser, display, or sound. A bot presses keys.</div>
+  <div class="arrow">→</div>
+  <div class="box" data-wb="stage-dataset"><b>② Dataset</b>Millions of (frames<sub>t-k..t</sub>, key<sub>t</sub>, frame<sub>t+1</sub>) triples saved as integer grids.</div>
+  <div class="arrow">→</div>
+  <div class="box" data-wb="stage-model"><b>③ Model</b>Small PyTorch net. Input: grid(s) + key. Output: a guess at every cell of the next grid.</div>
+  <div class="arrow">→</div>
+  <div class="box" data-wb="stage-play"><b>④ Play in the net</b>Feed the model its own outputs, so you play the game inside the neural net. That's the portfolio demo.</div>
+</div>
+<p>Known precedents: <b>World Models</b> (Ha &amp; Schmidhuber 2018), <b>GameNGen</b> (Doom running on a diffusion model, 2024), and <b>DIAMOND</b> / <b>Genie</b>. Your version is much easier because a frame is a 45×45 grid of symbols rather than pixels.</p>
+
+<h2 data-wb="game-facts">2. What I found in the game (and what changes the plan)</h2>
+<table>
+<tr><th>Fact</th><th>Impact on the plan</th></tr>
+<tr data-wb="fact-realtime"><td><b>It's not actually turn-based.</b> <code>mainLoop</code> ticks every 70 ms, lava every 50 ms, water every 200 ms. The player moves on keydown, and speed depends on level (<code>MOVMENT_SPEED_BY_LEVEL</code>).</td><td>We define a "step" as one main-loop tick and record whichever key is held (or NONE). The harness calls the systems in order itself, so wall-clock time doesn't matter.</td></tr>
+<tr data-wb="fact-viewport"><td>The viewport is 45×45 and follows the player across a 250×250 map. It zooms to 39×39 when 3+ dinos are near, with animated zoom steps.</td><td>When you move, a new row of terrain scrolls in and the model can't know what's in it. v1: lock zoom at 45. Unknown edges stay blurry, which is expected.</td></tr>
+<tr data-wb="fact-random"><td>Much of the rendering is random noise: water/ocean glyphs re-roll every tick, terrain glyph variants are random, tail glyphs flicker 20% of the time, and lava spread is probabilistic.</td><td><b>Collapse glyphs into semantic classes</b> (all water = WATER). Otherwise the model wastes its capacity predicting coin flips. Lava is truly stochastic, so the model learns spread probabilities.</td></tr>
+<tr data-wb="fact-dinos"><td>60 AI dinos run awareness/pursue/flee systems. A dino is drawn as head, body, legs, and tail around its position, and the facing direction sets the glyphs.</td><td>This is the hard and interesting part. Dino behavior depends on hidden state such as targets and cooldown counters. Giving the model 2–4 past frames lets it infer momentum.</td></tr>
+<tr data-wb="fact-rng"><td>Everything uses <code>ROT.RNG</code>, which is seedable.</td><td>Runs are reproducible, which helps with debugging and with building held-out test sets.</td></tr>
+<tr data-wb="fact-dom"><td>Game logic is tied to <code>document</code>, Howler sounds, and <code>ROT.Display</code>.</td><td>The harness stubs those out. Vitest tests already construct pieces of the game outside a browser, so this is a moderate refactor, not a rewrite.</td></tr>
+</table>
+
+<h2 data-wb="encoding">3. Turning a frame into numbers</h2>
+<p>Each cell becomes one integer class ID. Here is a toy 8×8 viewport:</p>
+<div class="row">
+<div class="card" style="flex:1 1 260px" data-wb="encode-glyphs"><b>As rendered</b><pre id="g1"></pre></div>
+<div class="card" style="flex:1 1 260px" data-wb="encode-ids"><b>As class IDs (the model's input)</b><pre id="g2"></pre></div>
+</div>
+<div class="card" data-wb="vocab"><b>Proposed vocabulary (~16 classes)</b><br>
+<span class="tag">0 OCEAN</span><span class="tag">1 WATER</span><span class="tag">2 DIRT</span><span class="tag">3 GRASS</span><span class="tag">4 SHRUB</span><span class="tag">5 JUNGLE</span><span class="tag">6 LAVA</span><span class="tag">7 BURNT</span><span class="tag">8 PLAYER_BODY</span><span class="tag">9 PLAYER_PART</span><span class="tag">10 DINO_BODY(lvl)</span><span class="tag">11 DINO_HEAD(dir)</span><span class="tag">12 DINO_TAIL</span><span class="tag">13 DINO_LEG</span><span class="tag">14 SKELETON</span><span class="tag">15 SCORE_TEXT</span>
+<p class="sub" style="margin:6px 0 0">Options: split the head class by direction (4) and the body class by dino level (5). Colors are dropped because they follow from the class. A pretty renderer maps IDs back to random glyphs for display.</p></div>
+<p>Key input becomes a one-hot vector over <code>[NONE, UP, RIGHT, DOWN, LEFT]</code>.</p>
+
+<h2 data-wb="model">4. The model, step by step</h2>
+<div class="steps"><button onclick="go(-1)">◀ prev</button> <span id="stepn"></span> <button onclick="go(1)">next ▶</button></div>
+<div class="card" id="step" data-wb="model-step"></div>
+
+<h2 data-wb="training">5. Training loop</h2>
+<pre data-wb="train-code">for frames, key, target in dataloader:      # frames: [B, k, 45, 45] ints
+    x      = one_hot(frames, 16)              # -> [B, k*16, 45, 45]
+    logits = model(x, key)                    # -> [B, 16, 45, 45]
+    loss   = cross_entropy(logits, target)    # per-cell classification
+    loss.backward(); opt.step()</pre>
+<div class="row">
+<div class="card good" style="flex:1 1 280px" data-wb="metric-baseline"><b>Baseline to beat: "copy last frame"</b><br>About 90%+ of cells don't change in a tick, so raw accuracy is misleading. Measure <b>accuracy on cells that changed</b>, and on dino cells specifically.</div>
+<div class="card warn" style="flex:1 1 280px" data-wb="metric-drift"><b>Rollout drift</b><br>Step 1 can look great while step 50 falls apart, because errors compound once the model eats its own output. Fixes: train on short rollouts, add noise to the inputs, or sample instead of taking the argmax.</div>
+</div>
+
+<h2 data-wb="stack">6. Stack &amp; viability</h2>
+<table>
+<tr><td><b>Data gen</b></td><td>Node + TypeScript inside your repo (reusing the vite/vitest setup). Write <code>.npy</code> or JSONL shards. At about 1 ms per tick headless, that's roughly a million frames in minutes.</td></tr>
+<tr data-wb="stack-framework"><td><b>Framework</b></td><td><b>PyTorch</b> rather than TensorFlow. It's what most current tutorials, Hugging Face, and research code use. HF's role is optional: host the dataset and model with <code>datasets</code>/<code>huggingface_hub</code>, then demo on a <b>Space</b>.</td></tr>
+<tr><td><b>Hardware</b></td><td>The v1 CNN (about 1–5M parameters) trains on a Mac's MPS GPU in under an hour. The transformer or diffusion variants might want a rented GPU (Colab or HF), at a few dollars.</td></tr>
+<tr data-wb="stack-demo"><td><b>Demo</b></td><td>Export to ONNX and run it in the browser with <code>onnxruntime-web</code>, using your existing ROT.Display renderer. The page shows the "real" and "dreamed" games side by side.</td></tr>
+<tr data-wb="verdict"><td><b>Verdict</b></td><td><b>Very viable.</b> Terrain, player movement, and scrolling will work quickly. Dino AI and lava will be fuzzy at first, and improving them is the learning curve. Each milestone is a demo you can show on its own.</td></tr>
+</table>
+
+<h2 data-wb="milestones">7. Milestones</h2>
+<ol>
+<li data-wb="m1">Headless harness that dumps encoded frames and keys, plus a viewer that replays them.</li>
+<li data-wb="m2">Copy-last-frame baseline and a metrics script.</li>
+<li data-wb="m3">CNN v1 that predicts one step. Check it on changed cells.</li>
+<li data-wb="m4">Autoregressive rollouts. Study drift and fix it.</li>
+<li data-wb="m5">Play inside the model in the browser (ONNX).</li>
+<li data-wb="m6">Stretch: a transformer over cell tokens, sampling for stochastic lava and dinos, and a bigger context.</li>
+</ol>
+</main>
+<script>
+const glyph={0:'༄',1:'≈',2:'˚',3:'ɷ',4:'ɰ',5:'ψ',6:'༉',8:'Ԇ',11:'⏵',12:'↼',13:'-'};
+const toy=[[0,0,1,1,3,3,3,4],[0,1,1,3,3,13,3,4],[1,1,3,3,12,10,11,4],[1,3,3,3,3,13,4,5],[3,3,9,3,2,2,4,5],[3,9,8,9,2,6,6,5],[3,3,9,2,6,6,6,5],[4,4,2,2,6,6,5,5]];
+const g=c=>c==10?'𑿋':c==9?"'":glyph[c];
+document.getElementById('g1').textContent=toy.map(r=>r.map(g).join(' ')).join('\n');
+document.getElementById('g2').textContent=toy.map(r=>r.map(c=>String(c).padStart(2)).join(' ')).join('\n');
+const steps=[
+["Input stack","The last <b>k</b> frames (say 2–4), each one-hot encoded to 16 channels, are stacked into a tensor of shape <code>[k·16, 45, 45]</code>. It's like an image with 64 color channels. Multiple frames let the model see motion and direction."],
+["Inject the key","The key one-hot <code>[5]</code> becomes a learned vector that is broadcast over every cell as extra channels, or used to modulate the features (FiLM). That's how the model learns that UP shifts the world down by one row."],
+["Encoder (CNN / U-Net)","Convolutions look at local neighborhoods, which fits this game because nearly everything is local: dinos step one cell, lava spreads to neighbors. Downsampling lets a cell \"see\" about 20 cells away, which covers a dino noticing the player."],
+["Decoder → logits","For each of the 45×45 cells the model outputs 16 scores, one per class, giving <code>[16, 45, 45]</code>. Softmax turns them into probabilities, e.g. \"this cell: 70% GRASS, 25% LAVA, 5% DINO_TAIL\"."],
+["Pick the next frame","Argmax (the most likely class) gives clean but overconfident output. Sampling from the probabilities gives lava that actually spreads randomly. The result is the predicted next frame, which can be fed back in as input for step ⑤."],
+["Alternative: transformer","Treat 2025 cells as tokens (or 9×9 patches) with attention. It's better for long-range dino interactions, but needs more data and compute. Try it after the CNN works so you have something to compare against."]];
+let i=0;function go(d){i=Math.max(0,Math.min(steps.length-1,i+d));document.getElementById('stepn').textContent=`step ${i+1} / ${steps.length}`;document.getElementById('step').innerHTML=`<b>${steps[i][0]}</b><p style="margin:6px 0 0">${steps[i][1]}</p>`}
+go(0);whiteboard_ready=1;
+</script>
+<script>window.whiteboard&&(whiteboard.pageState=()=>({modelStep:i+1}));</script>
+<script src="whiteboard.js"></script>
+</body></html>
