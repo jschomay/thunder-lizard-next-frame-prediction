@@ -266,3 +266,25 @@ Per-tick chance that a cell next to active lava becomes lava (non-scroll ticks):
 - The game rolls fresh dice every tick, so spread is **memoryless**: the best prediction needs only the current frame, not 20+ frames of history. k = 4 is enough.
 - Implications: argmax will **freeze** lava (stay ≫ spread on every tick). **Per-cell sampling is the *correct* model for lava** (spread really is independent per cell), unlike scrolling terrain, where it produced static. Per-tick accuracy can't measure this. Use **calibration** (predicted odds vs the table above) and **rollout growth curves** (lava area over 100+ ticks, averaged over many runs, vs real).
 - Generate ~100k stage-2 ticks before training; spread events are rare.
+
+## 2026-10-06 — Stage 2 (lava): warm start vs fresh (H4), and calibration (H12)
+Data: 200 episodes, 96,867 ticks. Both runs: k = 4, copy prior, no weighting, 3 epochs, ~17 min each.
+W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne1f31p · warm https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/9l1rdvgx
+
+| val dynamic acc | after 0.25 ep | after 1 ep | final (3 ep) |
+|---|---|---|---|
+| fresh | 39.0% | 67.5% | 72.5% |
+| **warm (from s1-3ep-k4-cw5)** | **70.7%** | 72.2% | **73.7%** |
+
+- **H4 supported:** the warm-started model beats the fresh model's *final* score within a quarter epoch, and finishes ahead.
+
+**Calibration** (val, cells next to lava, non-scroll ticks; predicted P(lava) vs actual):
+| terrain | actual | fresh predicts | warm predicts |
+|---|---|---|---|
+| DIRT | 11.5% | 17.8% | **12.0%** |
+| GRASS | 2.5% | 6.6% | 8.6% |
+| SHRUB | 1.4% | 7.5% | 6.7% |
+| JUNGLE | 1.0% | 11.7% | 2.3% |
+| WATER | 0.23% | 4.2% | 4.0% |
+- **Not calibrated:** the model over-predicts spread everywhere except DIRT (warm), by 2–17×. Ordering is roughly right (DIRT highest, WATER lowest-ish). A sampled rollout would spread lava several times too fast.
+- Possible causes (unverified): too little training (3 epochs; rare events take longer); interaction with the copy prior. Standard post-hoc fix: **temperature scaling** (fit one number that sharpens or softens the probabilities on validation data).
