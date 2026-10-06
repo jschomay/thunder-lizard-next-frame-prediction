@@ -1,0 +1,87 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Play in the Net</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1200px;margin:0 auto;padding:24px 16px 80px}
+nav a{margin-right:14px;color:var(--acc)}
+h1{font-size:26px;margin:8px 0 4px}.sub{color:var(--mut)}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-top:12px}
+.panel{text-align:center}.panel b{display:block;font-size:14px}.panel .d{font-size:12px;color:var(--mut);margin-bottom:4px;max-width:270px}
+canvas{image-rendering:pixelated;border-radius:4px;display:block}
+.btn{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--fg);background:var(--card);border-radius:4px;cursor:pointer}
+select{font:inherit;font-size:14px}
+.k{font-weight:700;font-size:18px}
+#chart{display:block;margin-top:6px;background:#fff;border:1px solid var(--line)}
+.sw{display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:12.5px}.sw i{width:12px;height:12px;display:inline-block}
+</style></head>
+<body><main>
+<nav><a href="index.html">Plan</a><a href="how.html">How it works</a><a href="data.html">Data</a><a href="predictions.html">Predictions</a><a href="play.html"><b>Play in the net</b></a><a href="precedents.html">Precedents</a></nav>
+<h1>Playing the game inside a neural net</h1>
+<p class="sub">All four start from the same real moment of a held-out game and get the same key presses. After that, each predictor only sees <b>its own previous output</b>, never the real game again. Regenerate with <code>uv run python -m tlfp.rollout checkpoints/&lt;run&gt;.pt</code>.</p>
+<div style="margin-top:8px"><select id="pick" data-wb="rollout-picker"></select>
+<button class="btn" id="pbtn" onclick="play()">▶ play</button>
+<button class="btn" onclick="go(-1)">◀</button><button class="btn" onclick="go(1)">▶</button>
+<input type="range" id="scrub" min="0" value="0" style="width:300px;vertical-align:middle">
+<span style="margin-left:8px">tick <span class="k" id="tick">0</span> · key <span class="k" id="key">–</span></span></div>
+<div class="row">
+<div class="panel" data-wb="p-real"><b>real game</b><div class="d">what actually happened</div><canvas id="real"></canvas></div>
+<div class="panel" data-wb="p-argmax"><b>model · argmax</b><div class="d">most likely class per cell</div><canvas id="argmax"></canvas></div>
+<div class="panel" data-wb="p-sample"><b>model · sampled</b><div class="d">random draw from its probabilities (H5)</div><canvas id="sample"></canvas></div>
+<div class="panel" data-wb="p-rule"><b>hand-written rule</b><div class="d">shift_rhythm, fed its own output</div><canvas id="rule"></canvas></div>
+</div>
+<h3 style="margin:18px 0 2px;font-size:15px">How far each has drifted from the real game</h3>
+<p class="sub" style="margin:0;font-size:13px">% of terrain cells that differ from the real frame. Some drift is unavoidable, because new terrain scrolling in can't be known. Compare the shapes on screen, not just the numbers.</p>
+<canvas id="chart" height="140" data-wb="drift-chart"></canvas>
+<div id="legend2" style="margin-top:4px"></div>
+<div id="legend" style="margin-top:4px"></div>
+</main>
+<script src="grid.js"></script>
+<script>
+const NAMES = ["real", "argmax", "sample", "rule"], COLORS = { argmax: "#d4202a", sample: "#7a3fd1", rule: "#8a8577" };
+let D, ep, t = 0, timer = null, drift = {};
+fetch("rollouts.json").then(r => r.json()).then(d => {
+  D = d;
+  const sel = document.getElementById("pick");
+  sel.innerHTML = d.episodes.map((e, i) => `<option value="${i}">${e.name} from tick ${e.start} (${e.actions.length} ticks) · ${d.run}</option>`).join("");
+  sel.onchange = () => load(+sel.value);
+  document.getElementById("legend").innerHTML = legendHTML();
+  document.getElementById("legend2").innerHTML = Object.entries(COLORS).map(([k, c]) => `<span class="sw"><i style="background:${c}"></i>${k}</span>`).join("");
+  document.getElementById("chart").onclick = ev => { const r = ev.target.getBoundingClientRect(); t = Math.round((ev.clientX - r.left) / r.width * (ep.frames.real.length - 1)); draw(); };
+  load(0);
+});
+function load(i) {
+  ep = D.episodes[i]; t = 0; document.getElementById("pick").value = i;
+  const s = document.getElementById("scrub"); s.max = ep.frames.real.length - 1; s.oninput = () => { t = +s.value; draw(); };
+  drift = {};
+  for (const n of ["argmax", "sample", "rule"]) drift[n] = ep.frames[n].map((f, j) => { const r = ep.frames.real[j][0]; let c = 0; for (let x = 0; x < 2025; x++) if (f[0][x] !== r[x]) c++; return c / 2025; });
+  draw();
+}
+function draw() {
+  for (const n of NAMES) { const f = ep.frames[n][t]; drawGrid(document.getElementById(n), f[0], f[1], { cell: 6 }); }
+  document.getElementById("tick").textContent = t;
+  document.getElementById("key").textContent = t > 0 ? ep.actions[t - 1] : "–";
+  document.getElementById("scrub").value = t;
+  const c = document.getElementById("chart"); c.width = c.parentElement.clientWidth || 1100;
+  const g = c.getContext("2d"), n = ep.frames.real.length, W = c.width, H = c.height;
+  g.clearRect(0, 0, W, H);
+  g.strokeStyle = "#eee"; g.fillStyle = "#999"; g.font = "11px system-ui";
+  for (const v of [0.25, 0.5, 0.75]) { g.beginPath(); g.moveTo(0, H - v * H); g.lineTo(W, H - v * H); g.stroke(); g.fillText(v * 100 + "%", 4, H - v * H - 2); }
+  for (const [name, col] of Object.entries(COLORS)) {
+    g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+    drift[name].forEach((v, j) => { const x = j / (n - 1) * W, y = H - v * H; j ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  }
+  g.fillStyle = "#1d1d1b"; g.fillRect(t / (n - 1) * W - 1, 0, 2, H);
+}
+function go(d) { t = Math.max(0, Math.min(ep.frames.real.length - 1, t + d)); draw(); }
+function play() {
+  const b = document.getElementById("pbtn");
+  if (timer) { clearInterval(timer); timer = null; b.textContent = "▶ play"; return; }
+  b.textContent = "❚❚ pause";
+  timer = setInterval(() => { if (t >= ep.frames.real.length - 1) return play(); go(1); }, 140);
+}
+</script>
+<script src="whiteboard.js"></script>
+</body></html>

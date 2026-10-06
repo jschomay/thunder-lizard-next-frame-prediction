@@ -219,3 +219,22 @@ W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/24sko1uj
 - Edge cells come from procedural generation and don't need to be exact; they need to be *plausible*.
 - Movement rules confirmed by you: **ocean blocks the player; water slows the player.** If training can't get these, the rules could be simplified.
 - Open question → next experiment: in a rollout (model fed its own output), do newly revealed borders form island shapes or **smear**? Prediction: argmax smears (repeating the edge is the single most likely guess), and sampling (H5) or a generative model is needed for plausible new terrain.
+
+## 2026-10-06 — First "play in the net" rollouts (no training)
+`tlfp/rollout.py` plus the whiteboard **Play in the net** tab: 6 held-out episodes, 150 ticks each. All predictors start from the same real frames and replay the real keys, then only ever see their own output.
+
+**Smear question, answered:**
+- **argmax:** coherent but *stretched*. Newly revealed terrain continues the edge as long diagonal bands, a smooth smear rather than islands.
+- **rule:** smears too, as straight stripes (it literally repeats the edge row).
+- **sampled:** no smear, but **static**. Each cell is drawn independently, so terrain becomes speckle noise. Independent per-cell sampling can't make coherent shapes (H5 refuted in its simple form).
+
+**The player disappears (argmax) or multiplies (sampled):**
+| | player lost (count = 0) | ticks with >1 player |
+|---|---|---|
+| argmax | **4 of 6 rollouts**, often within 1–22 ticks | 0 |
+| sampled | 4 of 6 at some point | up to 150 of 150 ticks; up to **17 players** |
+| rule | never | never |
+
+- Likely cause (unverified): the player's probability is **split across 4 facing classes** (×5 levels). Each one individually loses to "empty", so argmax picks empty even when "some player is here" is the most likely event. Sampling has the opposite problem: every cell rolls independently, so several cells can each come up "player".
+- Fix ideas: factor the entity output into *what's here* (empty/player/dino/skeleton), then *its facing/level*. Or treat the player specially (exactly one, placed at the highest-probability cell).
+- Per-step accuracy hid all of this; **rollouts are a necessary evaluation** (supports H7/H8).
