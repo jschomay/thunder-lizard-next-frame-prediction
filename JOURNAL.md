@@ -238,3 +238,11 @@ W&B: https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/24sko1uj
 - Likely cause (unverified): the player's probability is **split across 4 facing classes** (×5 levels). Each one individually loses to "empty", so argmax picks empty even when "some player is here" is the most likely event. Sampling has the opposite problem: every cell rolls independently, so several cells can each come up "player".
 - Fix ideas: factor the entity output into *what's here* (empty/player/dino/skeleton), then *its facing/level*. Or treat the player specially (exactly one, placed at the highest-probability cell).
 - Per-step accuracy hid all of this; **rollouts are a necessary evaluation** (supports H7/H8).
+
+## 2026-10-06 — Speed, continuity, and priorities (discussion)
+- **Inference speed (measured):** stage-1 CNN, single frame: **2.1 ms CPU / 1.5 ms Apple GPU** (~1 GFLOP per frame). 10 fps real-time play needs 100 ms/frame, about 50× headroom natively. Browser (onnxruntime-web) not yet measured; even 10× slower would be ~20 ms. **Design constraint:** keep per-frame compute within ~10× of today's.
+- **Continuity** (leave an area, come back, and it has changed): the model only sees k frames, so off-screen terrain is forgotten. Precedents struggle here too (GameNGen ~3 s of memory, Oasis notoriously, Genie 3 among the first to hold minutes; GameGAN used an explicit memory module). **Out of scope to solve; in scope to measure** (left-N/right-N rollouts scored on returning terrain). Possible later: a self-written memory map built only from the model's own predictions.
+- **No grounding in the real map.** Decided against: it would make this something other than next-frame prediction.
+- **Sampling "flutter"** kept as a possible fun secondary mode (smoother version: lower temperature, or correlated noise).
+- **Entities:** the player is the easy case of the dino problem (split probabilities, multiple instances, appear/disappear, stochastic AI). Design the entity output (H11) for dinos and validate it on the player.
+- **Priorities:** (1) water/ocean timing via short 3-epoch comparisons; (2) stage 2 lava (stochastic, tests H4 warm start); (3) stage 3 dinos with factored entity output, probably a U-Net; plus cheap side checks (continuity metric, browser speed).
