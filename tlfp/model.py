@@ -27,9 +27,14 @@ def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
 
 
 class CNN(nn.Module):
-    def __init__(self, k: int = 2, width: int = 64, depth: int = 6):
+    def __init__(self, k: int = 2, width: int = 64, depth: int = 6, copy_prior: bool = False):
         super().__init__()
         self.k = k
+        # copy prior (H10): add a learned bonus to the class each cell had in the last frame,
+        # so "nothing changes" is the default and the network only has to learn changes
+        self.copy_prior = copy_prior
+        if copy_prior:
+            self.copy_strength = nn.Parameter(torch.tensor([5.0, 5.0]))
         in_ch = k * (N_TERRAIN + N_ENTITY) + N_KEYS
         layers: list[nn.Module] = [nn.Conv2d(in_ch, width, 3, padding=1), nn.ReLU()]
         for _ in range(depth - 1):
@@ -41,7 +46,12 @@ class CNN(nn.Module):
 
     def forward(self, context: torch.Tensor, keys: torch.Tensor):
         h = self.body(encode_input(context, keys))
-        return self.terrain_head(h), self.entity_head(h)
+        t, e = self.terrain_head(h), self.entity_head(h)
+        if self.copy_prior:
+            last = context[:, -1]
+            t = t + self.copy_strength[0] * F.one_hot(last[:, 0], N_TERRAIN).permute(0, 3, 1, 2)
+            e = e + self.copy_strength[1] * F.one_hot(last[:, 1], N_ENTITY).permute(0, 3, 1, 2)
+        return t, e
 
     @torch.no_grad()
     def predict(self, context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:

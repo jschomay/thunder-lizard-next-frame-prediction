@@ -1,7 +1,7 @@
-.whiteboard/
-.venv/
 __pycache__/
-wandb/
-data/
-checkpoints/
 .ipynb_checkpoints/
+.venv/
+.whiteboard/
+checkpoints/
+data/
+wandb/

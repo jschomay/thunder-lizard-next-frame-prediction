@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -72,6 +74,11 @@ def main():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--evals-per-epoch", type=int, default=4)
+    p.add_argument("--changed-weight", type=float, default=1.0, help="loss weight for cells that change (H9)")
+    p.add_argument("--copy-prior", action="store_true", help="default to copying the last frame (H10)")
+    p.add_argument("--warmup", type=float, default=0.05, help="fraction of steps for LR warmup")
+    p.add_argument("--clip", type=float, default=1.0, help="gradient norm clip (0 = off)")
+    p.add_argument("--max-steps", type=int, default=0, help="stop early (smoke tests)")
     p.add_argument("--no-wandb", action="store_true")
     p.add_argument("--name", default=None)
     args = p.parse_args()
@@ -80,7 +87,7 @@ def main():
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     train_eps, val_eps = split_by_episode(find_episodes(*args.data), 0.1, seed=0)
     train, val = Frames(train_eps, args.k, device), Frames(val_eps, args.k, device)
-    model = CNN(args.k, args.width, args.depth).to(device)
+    model = CNN(args.k, args.width, args.depth, copy_prior=args.copy_prior).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"device={device} train={len(train)} val={len(val)} params={n_params:,}")
@@ -92,30 +99,54 @@ def main():
                          config={**vars(args), "params": n_params, "train_examples": len(train)})
 
     steps_per_epoch = len(train) // args.batch
+    total_steps = steps_per_epoch * args.epochs
+    warmup_steps = max(1, int(total_steps * args.warmup))
+    # linear warmup, then cosine decay to 5% of the peak learning rate
+    lr_at = lambda s: args.lr * (s / warmup_steps if s < warmup_steps else
+                                 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (s - warmup_steps) / (total_steps - warmup_steps))))
     eval_every = max(1, steps_per_epoch // args.evals_per_epoch)
+    ckpt = Path("checkpoints") / f"{args.name or 'run'}.pt"
+    ckpt.parent.mkdir(exist_ok=True)
+    best = -1.0
     step, t0 = 0, time.time()
     for epoch in range(args.epochs):
         order = torch.randperm(len(train), device=device)
         for b in range(steps_per_epoch):
             context, keys, target = train.batch(order[b * args.batch:(b + 1) * args.batch])
+            for g in opt.param_groups:
+                g["lr"] = lr_at(step)
             t_logits, e_logits = model(context, keys)
-            loss_t = F.cross_entropy(t_logits, target[:, 0])
-            loss_e = F.cross_entropy(e_logits, target[:, 1])
+            # per-cell losses, with cells that change weighted up (H9)
+            changed = context[:, -1] != target
+            w = 1 + (args.changed_weight - 1) * changed.float()
+            ce_t = F.cross_entropy(t_logits, target[:, 0], reduction="none")
+            ce_e = F.cross_entropy(e_logits, target[:, 1], reduction="none")
+            loss_t = (ce_t * w[:, 0]).sum() / w[:, 0].sum()
+            loss_e = (ce_e * w[:, 1]).sum() / w[:, 1].sum()
             loss = loss_t + loss_e
             opt.zero_grad()
             loss.backward()
+            if args.clip:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             opt.step()
             step += 1
+            if args.max_steps and step >= args.max_steps:
+                break
             if run and step % 20 == 0:
                 run.log({"train/loss": loss.item(), "train/loss_terrain": loss_t.item(),
-                         "train/loss_entity": loss_e.item(), "epoch": step / steps_per_epoch}, step=step)
+                         "train/loss_entity": loss_e.item(), "train/lr": lr_at(step),
+                         "epoch": step / steps_per_epoch}, step=step)
             if step % eval_every == 0:
                 m = evaluate(model, val)
                 print(f"epoch {step / steps_per_epoch:5.2f}  loss {loss.item():.4f}  "
                       f"val dynamic {m['dynamic_acc']:.2%}  changed {m['changed_acc']:.2%}  "
                       f"exact {m['exact_frame_acc']:.2%}  ({time.time() - t0:.0f}s)")
+                if m["dynamic_acc"] > best:
+                    best = m["dynamic_acc"]
+                    torch.save({"config": vars(args), "state": model.state_dict(), "step": step, "val": m}, ckpt)
+                    print(f"  saved best -> {ckpt}")
                 if run:
-                    run.log({f"val/{k}": v for k, v in m.items()}, step=step)
+                    run.log({f"val/{k}": v for k, v in m.items()} | {"val/best_dynamic_acc": best}, step=step)
     if run:
         run.finish()
 
