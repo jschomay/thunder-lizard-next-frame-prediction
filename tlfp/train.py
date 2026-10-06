@@ -79,6 +79,7 @@ def main():
     p.add_argument("--warmup", type=float, default=0.05, help="fraction of steps for LR warmup")
     p.add_argument("--clip", type=float, default=1.0, help="gradient norm clip (0 = off)")
     p.add_argument("--max-steps", type=int, default=0, help="stop early (smoke tests)")
+    p.add_argument("--init", default=None, help="start from a checkpoint's weights (warm start, H4)")
     p.add_argument("--no-wandb", action="store_true")
     p.add_argument("--name", default=None)
     args = p.parse_args()
@@ -88,6 +89,9 @@ def main():
     train_eps, val_eps = split_by_episode(find_episodes(*args.data), 0.1, seed=0)
     train, val = Frames(train_eps, args.k, device), Frames(val_eps, args.k, device)
     model = CNN(args.k, args.width, args.depth, copy_prior=args.copy_prior).to(device)
+    if args.init:
+        model.load_state_dict(torch.load(args.init, map_location=device)["state"])
+        print(f"warm start from {args.init}")
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"device={device} train={len(train)} val={len(val)} params={n_params:,}")
