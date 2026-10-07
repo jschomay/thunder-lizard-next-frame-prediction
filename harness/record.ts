@@ -15,7 +15,7 @@ import XY from "../game/src/xy"
 const STAGES: Record<number, Omit<EpisodeOptions, "seed">> = {
   1: { numDinos: 0, lava: false },   // player only
   2: { numDinos: 0, lava: true },    // + lava
-  3: { numDinos: 5, lava: true },    // + a few dinos
+  3: { numDinos: 25, lava: true },   // + some dinos (5 left dinos off-screen 82% of ticks)
   4: { numDinos: 60, lava: true },   // full game
 }
 

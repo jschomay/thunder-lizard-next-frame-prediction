@@ -319,3 +319,7 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 4. Runs (warn the user before each): CNN + H11 vs U-Net + H11, 3 epochs each, ~20–25 min each.
 5. Evaluate dinos: error analysis by entity type, rollouts (do dinos persist, move plausibly, chase or flee?), player survival in rollouts (H11).
 6. Keep the speed budget: per-frame compute within ~10× of today's ~1 GFLOP (2 ms CPU).
+
+## 2026-10-07 — Stage 3 data
+- With 5 dinos, a dino was on screen in only 18% of ticks and moved in 12% (your own games: 51% moving). Raised stage 3 to **25 dinos**: now 52% on screen and 38% moving.
+- More dinos means more early deaths (only 64 of 200 games reached 500 ticks), so I generated two batches (seeds 0 and 1000): `data/stage3-100k` + `data/stage3-100k-b` = 400 games, **101,585 ticks**.
