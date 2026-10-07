@@ -75,6 +75,7 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--evals-per-epoch", type=int, default=4)
     p.add_argument("--changed-weight", type=float, default=1.0, help="loss weight for cells that change (H9)")
+    p.add_argument("--dino-weight", type=float, default=1.0, help="loss weight for cells with a dino now or next (stage 3)")
     p.add_argument("--copy-prior", action="store_true", help="default to copying the last frame (H10)")
     p.add_argument("--warmup", type=float, default=0.05, help="fraction of steps for LR warmup")
     p.add_argument("--clip", type=float, default=1.0, help="gradient norm clip (0 = off)")
@@ -134,6 +135,10 @@ def main():
             # per-cell losses, with cells that change weighted up (H9)
             changed = context[:, -1] != target
             w = 1 + (args.changed_weight - 1) * changed.float()
+            if args.dino_weight != 1:  # dinos are ~0.1% of cells; without this they barely move the loss
+                has = lambda e: (e >= 1) & (e <= 40)
+                d = (has(context[:, -1, 1]) | has(target[:, 1])).float()
+                w = w * (1 + (args.dino_weight - 1) * d[:, None])
             ce_t = F.cross_entropy(t_logits, target[:, 0], reduction="none")
             loss_t = (ce_t * w[:, 0]).sum() / w[:, 0].sum()
             if args.split_entity:
