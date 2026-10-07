@@ -9,6 +9,8 @@ import { mkdirSync, writeFileSync } from "fs"
 import { join } from "path"
 import * as ROT from "../game/lib/rotjs"
 import { HeadlessGame, KEYS, Key, TERRAIN, ENTITY_CLASSES, VIEW, EpisodeOptions } from "./headless"
+import * as Terrain from "../game/src/entities/terrain"
+import XY from "../game/src/xy"
 
 const STAGES: Record<number, Omit<EpisodeOptions, "seed">> = {
   1: { numDinos: 0, lava: false },   // player only
@@ -24,6 +26,8 @@ const episodes = Number(args.episodes ?? 10)
 const ticks = Number(args.ticks ?? 500)
 const firstSeed = Number(args.seed ?? 1)
 const outDir = args.out ?? join(__dirname, "..", "data", `stage${stage}`)
+// --scenario lava-still: player starts a few cells from lava and never moves (clean lava-growth test, H12)
+const scenario = args.scenario
 
 // "Sticky" random walker: holds a direction for a while, sometimes idles.
 // Placeholder for the heuristic bot and human recordings (see H6).
@@ -36,6 +40,18 @@ class StickyBot {
       this.left = ROT.RNG.getUniformInt(3, 20)
     }
     return this.key
+  }
+}
+
+// move the player onto a grass cell `dist` steps from the lava frontier
+function placeNearLava(game: HeadlessGame, dist: number) {
+  const l = game.level
+  const lava = [...l.map.getTagged(Terrain.Lava)].map(e => e.getXY())
+  for (const c of ROT.RNG.shuffle(lava)) {
+    for (const [dx, dy] of [[dist, 0], [-dist, 0], [0, dist], [0, -dist]]) {
+      const xy = new XY(c.x + dx, c.y + dy)
+      if (l.map.at(xy) instanceof Terrain.Grass && !l.dinos.at(xy)) { l.playerDino.moveTo(xy); return }
+    }
   }
 }
 
@@ -52,7 +68,8 @@ let totalTicks = 0
 for (let e = 0; e < episodes; e++) {
   const seed = firstSeed + e
   const game = new HeadlessGame({ seed, ...STAGES[stage] })
-  const bot = new StickyBot()
+  const bot = scenario === "lava-still" ? { act: (): Key => "NONE" } : new StickyBot()
+  if (scenario === "lava-still") placeNearLava(game, 12)
   const frame = 2 * VIEW * VIEW
   const obs = new Uint8Array((ticks + 1) * frame)
   const actions = new Uint8Array(ticks)
@@ -72,7 +89,7 @@ for (let e = 0; e < episodes; e++) {
   npy(join(dir, "obs.npy"), obs.subarray(0, (t + 1) * frame), [t + 1, 2, VIEW, VIEW])
   npy(join(dir, "actions.npy"), actions.subarray(0, t), [t])
   writeFileSync(join(dir, "meta.json"), JSON.stringify({
-    seed, stage, ...STAGES[stage], ticks: t, outcome: game.done || "timeout",
+    seed, stage, ...STAGES[stage], scenario: scenario ?? null, ticks: t, outcome: game.done || "timeout",
     keys: KEYS, terrain: TERRAIN, entityClasses: ENTITY_CLASSES,
   }, null, 2))
   totalTicks += t

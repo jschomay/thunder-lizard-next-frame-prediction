@@ -288,3 +288,19 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 | WATER | 0.23% | 4.2% | 4.0% |
 - **Not calibrated:** the model over-predicts spread everywhere except DIRT (warm), by 2–17×. Ordering is roughly right (DIRT highest, WATER lowest-ish). A sampled rollout would spread lava several times too fast.
 - Possible causes (unverified): too little training (3 epochs; rare events take longer); interaction with the copy prior. Standard post-hoc fix: **temperature scaling** (fit one number that sharpens or softens the probabilities on validation data).
+
+## 2026-10-07 — Lava rollouts (H12, second half)
+- New eval set `data/eval-lava-still`: 12 episodes, player placed 12 cells from lava and **standing still** (`record.ts --scenario lava-still`), so only lava changes. The real game: lava+burnt area grows ~150 cells in 20 ticks; the player is usually overtaken in 80–300 ticks.
+- Rollouts of `s2-warm-k4` (no keys), new lava+burnt cells, mean:
+
+| tick | real | argmax | hybrid (dice on lava + neighbors) | sample (dice everywhere) |
+|---|---|---|---|---|
+| 20 | 150 | **0** | 52 | 79 |
+| 40 | 262 | 0 | 93 | 164 |
+| 80 | 376 | 0 | 140 | 293 |
+
+- **argmax freezes lava** completely, as predicted. **Sampling spreads it, but too slowly** (sample ≈ 50–78% of real; hybrid ≈ 35%).
+- First hybrid version only rolled dice for cells *next to* lava, so lava never burned out (found by eye in the Play tab). Fixed: burning out is also a per-cell dice roll.
+- **Why it under-spreads despite over-predicting spread odds (measured):** the model gives **frontier lava** (which still has a burnable neighbor) a **4.4% chance per tick of burning out; the game's true rate is ~0%** (lava can only burn out when fully enclosed by lava/ocean). For enclosed lava it's well calibrated (14.2% vs 13.6%). Premature burnout kills the spreading front faster than the inflated spread odds can make up.
+- Temperature scaling wouldn't fix this. It's a structural error ("can't burn out while it has a burnable neighbor"), not overall over/under-confidence. Candidates: longer training, or more lava-frontier examples.
+- Your call: exact lava rates aren't required; plausible-looking is enough for the POC.

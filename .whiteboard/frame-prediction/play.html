@@ -20,17 +20,13 @@ select{font:inherit;font-size:14px}
 <nav><a href="index.html">Plan</a><a href="how.html">How it works</a><a href="data.html">Data</a><a href="predictions.html">Predictions</a><a href="play.html"><b>Play in the net</b></a><a href="precedents.html">Precedents</a></nav>
 <h1>Playing the game inside a neural net</h1>
 <p class="sub">All four start from the same real moment of a held-out game and get the same key presses. After that, each predictor only sees <b>its own previous output</b>, never the real game again. Regenerate with <code>uv run python -m tlfp.rollout checkpoints/&lt;run&gt;.pt</code>.</p>
-<div style="margin-top:8px"><select id="pick" data-wb="rollout-picker"></select>
+<div style="margin-top:8px"><select id="file" data-wb="rollout-file"><option value="rollouts.json">Stage 1: movement (2-frame model)</option><option value="rollouts-lava.json">Stage 2: lava, player standing still (4-frame warm model)</option></select>
+<select id="pick" data-wb="rollout-picker"></select>
 <button class="btn" id="pbtn" onclick="play()">▶ play</button>
 <button class="btn" onclick="go(-1)">◀</button><button class="btn" onclick="go(1)">▶</button>
 <input type="range" id="scrub" min="0" value="0" style="width:300px;vertical-align:middle">
 <span style="margin-left:8px">tick <span class="k" id="tick">0</span> · key <span class="k" id="key">–</span></span></div>
-<div class="row">
-<div class="panel" data-wb="p-real"><b>real game</b><div class="d">what actually happened</div><canvas id="real"></canvas></div>
-<div class="panel" data-wb="p-argmax"><b>model · argmax</b><div class="d">most likely class per cell</div><canvas id="argmax"></canvas></div>
-<div class="panel" data-wb="p-sample"><b>model · sampled</b><div class="d">random draw from its probabilities (H5)</div><canvas id="sample"></canvas></div>
-<div class="panel" data-wb="p-rule"><b>hand-written rule</b><div class="d">shift_rhythm, fed its own output</div><canvas id="rule"></canvas></div>
-</div>
+<div class="row" id="panels"></div>
 <h3 style="margin:18px 0 2px;font-size:15px">How far each has drifted from the real game</h3>
 <p class="sub" style="margin:0;font-size:13px">% of terrain cells that differ from the real frame. Some drift is unavoidable, because new terrain scrolling in can't be known. Compare the shapes on screen, not just the numbers.</p>
 <canvas id="chart" height="140" data-wb="drift-chart"></canvas>
@@ -39,10 +35,23 @@ select{font:inherit;font-size:14px}
 </main>
 <script src="grid.js"></script>
 <script>
-const NAMES = ["real", "argmax", "sample", "rule"], COLORS = { argmax: "#d4202a", sample: "#7a3fd1", rule: "#8a8577" };
+const INFO = {
+  real: ["real game", "what actually happened"],
+  argmax: ["model · argmax", "most likely class per cell"],
+  hybrid: ["model · hybrid", "argmax, but cells next to lava roll dice"],
+  sample: ["model · sampled", "every cell rolls dice from its probabilities"],
+  rule: ["hand-written rule", "shift_rhythm, fed its own output"],
+};
+const PALETTE = { argmax: "#d4202a", hybrid: "#e08a00", sample: "#7a3fd1", rule: "#8a8577" };
+let NAMES = [], COLORS = {};
 let D, ep, t = 0, timer = null, drift = {};
-fetch("rollouts.json").then(r => r.json()).then(d => {
+document.getElementById("file").onchange = ev => loadFile(ev.target.value);
+loadFile("rollouts.json");
+function loadFile(f) { fetch(f).then(r => r.json()).then(d => {
   D = d;
+  NAMES = Object.keys(d.episodes[0].frames);
+  COLORS = Object.fromEntries(NAMES.filter(n => n !== "real").map(n => [n, PALETTE[n] || "#333"]));
+  document.getElementById("panels").innerHTML = NAMES.map(n => `<div class="panel" data-wb="p-${n}"><b>${INFO[n][0]}</b><div class="d">${INFO[n][1]}</div><canvas id="${n}"></canvas></div>`).join("");
   const sel = document.getElementById("pick");
   sel.innerHTML = d.episodes.map((e, i) => `<option value="${i}">${e.name} from tick ${e.start} (${e.actions.length} ticks) · ${d.run}</option>`).join("");
   sel.onchange = () => load(+sel.value);
@@ -50,12 +59,12 @@ fetch("rollouts.json").then(r => r.json()).then(d => {
   document.getElementById("legend2").innerHTML = Object.entries(COLORS).map(([k, c]) => `<span class="sw"><i style="background:${c}"></i>${k}</span>`).join("");
   document.getElementById("chart").onclick = ev => { const r = ev.target.getBoundingClientRect(); t = Math.round((ev.clientX - r.left) / r.width * (ep.frames.real.length - 1)); draw(); };
   load(0);
-});
+}); }
 function load(i) {
   ep = D.episodes[i]; t = 0; document.getElementById("pick").value = i;
   const s = document.getElementById("scrub"); s.max = ep.frames.real.length - 1; s.oninput = () => { t = +s.value; draw(); };
   drift = {};
-  for (const n of ["argmax", "sample", "rule"]) drift[n] = ep.frames[n].map((f, j) => { const r = ep.frames.real[j][0]; let c = 0; for (let x = 0; x < 2025; x++) if (f[0][x] !== r[x]) c++; return c / 2025; });
+  for (const n of NAMES.filter(n => n !== "real")) drift[n] = ep.frames[n].map((f, j) => { const r = ep.frames.real[j][0]; let c = 0; for (let x = 0; x < 2025; x++) if (f[0][x] !== r[x]) c++; return c / 2025; });
   draw();
 }
 function draw() {
