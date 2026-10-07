@@ -18,6 +18,14 @@ import torch.nn.functional as F
 from tlfp.data import find_episodes, split_by_episode
 from tlfp.metrics import add, frame_metrics, summarize
 from tlfp.model import build_model, split_ids
+from tlfp.moves import episode_fates
+
+
+def episode_fates_cached(ep) -> np.ndarray:
+    f = ep.path / "fates.npy"
+    if not f.exists():
+        np.save(f, episode_fates(np.asarray(ep.obs)))
+    return np.load(f)
 
 print = __import__("functools").partial(print, flush=True)  # live logs when redirected to a file
 
@@ -25,13 +33,15 @@ print = __import__("functools").partial(print, flush=True)  # live logs when red
 class Frames:
     """All episodes in one in-memory uint8 tensor, with window indices that never cross episodes."""
 
-    def __init__(self, episodes, k: int, device):
-        obs, acts, idx = [], [], []
+    def __init__(self, episodes, k: int, device, fates: bool = False):
+        obs, acts, idx, fts = [], [], [], []
         offset = 0
         for ep in episodes:
             o = np.asarray(ep.obs)
             obs.append(o)
             acts.append(np.asarray(ep.actions))
+            if fates:
+                fts.append(np.append(episode_fates_cached(ep), np.full((1, 45, 45), -1, np.int8), 0))
             for t in range(len(ep)):
                 # frame indices for the k-window ending at t, padded with the episode's first frame
                 idx.append([offset + max(0, s) for s in range(t - k + 1, t + 1)] + [offset + t + 1])
@@ -41,6 +51,7 @@ class Frames:
         a = np.concatenate([np.append(x, 0) for x in acts])                      # align actions with frames
         self.keys = torch.from_numpy(a.astype(np.int64)).to(device)
         self.k = k
+        self.fates = torch.from_numpy(np.concatenate(fts)).to(device) if fates else None  # [F, 45, 45]
 
     def __len__(self):
         return len(self.idx)
@@ -50,6 +61,8 @@ class Frames:
         context = self.obs[ix[:, :-1]].long()       # [B, k, 2, 45, 45]
         target = self.obs[ix[:, -1]].long()         # [B, 2, 45, 45]
         keys = self.keys[ix[:, -2]]                 # key at the last context frame
+        if self.fates is not None:
+            return context, keys, target, self.fates[ix[:, -2]].long()
         return context, keys, target
 
 
@@ -58,7 +71,7 @@ def evaluate(model, data: Frames, batch_size=256) -> dict[str, float]:
     totals: dict[str, int] = {}
     for i in range(0, len(data), batch_size):
         rows = torch.arange(i, min(i + batch_size, len(data)), device=data.obs.device)
-        context, keys, target = data.batch(rows)
+        context, keys, target = data.batch(rows)[:3]
         pred = model.predict(context, keys)
         add(totals, frame_metrics(context[:, -1].cpu().numpy(), pred.cpu().numpy(), target.cpu().numpy()))
     model.train()
@@ -83,6 +96,7 @@ def main():
     p.add_argument("--clip", type=float, default=1.0, help="gradient norm clip (0 = off)")
     p.add_argument("--max-steps", type=int, default=0, help="stop early (smoke tests)")
     p.add_argument("--split-entity", action="store_true", help="what's-here / facing / level heads (H11)")
+    p.add_argument("--fates", action="store_true", help="per-entity fate head (H13)")
     p.add_argument("--unet", action="store_true", help="add a zero-initialized shrink-and-grow branch")
     p.add_argument("--init", default=None, help="start from a checkpoint's weights (warm start, H4)")
     p.add_argument("--no-wandb", action="store_true")
@@ -92,7 +106,7 @@ def main():
     torch.manual_seed(args.seed)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     train_eps, val_eps = split_by_episode(find_episodes(*args.data), 0.1, seed=0)
-    train, val = Frames(train_eps, args.k, device), Frames(val_eps, args.k, device)
+    train, val = Frames(train_eps, args.k, device, args.fates), Frames(val_eps, args.k, device, args.fates)
     model = build_model(vars(args)).to(device)
     if args.init:
         # copy every weight whose name and shape match; new parts (split heads, U-Net branch) start fresh
@@ -130,10 +144,10 @@ def main():
     for epoch in range(args.epochs):
         order = torch.randperm(len(train), device=device)
         for b in range(steps_per_epoch):
-            context, keys, target = train.batch(order[b * args.batch:(b + 1) * args.batch])
+            context, keys, target, *fate = train.batch(order[b * args.batch:(b + 1) * args.batch])
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
-            t_logits, e_out = model.forward_parts(context, keys)
+            t_logits, e_out, *fate_logits = model.forward_parts(context, keys)
             # per-cell losses, with cells that change weighted up (H9)
             changed = context[:, -1] != target
             w = 1 + (args.changed_weight - 1) * changed.float()
@@ -157,6 +171,10 @@ def main():
                 ce_e = F.cross_entropy(e_out, target[:, 1], reduction="none")
                 loss_e = (ce_e * w[:, 1]).sum() / w[:, 1].sum()
             loss = loss_t + loss_e
+            if args.fates:  # per-entity fate, weighted like dino cells and averaged over all cells
+                ce_f = F.cross_entropy(fate_logits[0], fate[0].clamp(min=0), reduction="none") * (fate[0] >= 0)
+                loss_f = ce_f.sum() * args.dino_weight / w[:, 1].sum()
+                loss = loss + loss_f
             opt.zero_grad()
             loss.backward()
             if args.clip:
@@ -167,7 +185,7 @@ def main():
                 break
             if run and step % 20 == 0:
                 run.log({"train/loss": loss.item(), "train/loss_terrain": loss_t.item(),
-                         "train/loss_entity": loss_e.item(), "train/lr": lr_at(step),
+                         "train/loss_entity": loss_e.item(), **({"train/loss_fate": loss_f.item()} if args.fates else {}), "train/lr": lr_at(step),
                          "epoch": step / steps_per_epoch}, step=step)
             if step % eval_every == 0:
                 m = evaluate(model, val)

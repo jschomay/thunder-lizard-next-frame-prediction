@@ -65,7 +65,8 @@ def group_entity(e: torch.Tensor):
 
 def build_model(c: dict) -> "CNN":
     return CNN(c["k"], c["width"], c["depth"], copy_prior=c.get("copy_prior", False),
-               split_entity=c.get("split_entity", False), unet=c.get("unet", False))
+               split_entity=c.get("split_entity", False), unet=c.get("unet", False),
+               fates=c.get("fates", False))
 
 
 def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
@@ -81,7 +82,7 @@ def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
 
 class CNN(nn.Module):
     def __init__(self, k: int = 2, width: int = 64, depth: int = 6, copy_prior: bool = False,
-                 split_entity: bool = False, unet: bool = False):
+                 split_entity: bool = False, unet: bool = False, fates: bool = False):
         super().__init__()
         self.k = k
         # copy prior (H10): add a learned bonus to the class each cell had in the last frame,
@@ -100,6 +101,12 @@ class CNN(nn.Module):
         # split mode reuses the same 42 scores, but groups them into the three questions (see
         # group_entity), so a warm start from a flat-head model begins with the same predictions
         self.entity_head = nn.Conv2d(width, N_ENTITY, 1)
+        # H13: per entity, "what happens to you?" (stay/up/right/down/left/die/gone), read at the
+        # cells that hold an entity in the last frame (see tlfp/moves.py)
+        self.fates = fates
+        if fates:
+            self.fate_head = nn.Conv2d(width, 7, 1)
+            nn.init.zeros_(self.fate_head.weight); nn.init.zeros_(self.fate_head.bias)
         self.unet = unet
         if unet:  # 45 -> 23 -> 12 and back; each 3x3 at 12x12 sees ~1/4 of the screen
             self.down = nn.Sequential(
@@ -113,7 +120,7 @@ class CNN(nn.Module):
             nn.init.zeros_(self.up[-1].weight); nn.init.zeros_(self.up[-1].bias)
 
     def forward(self, context: torch.Tensor, keys: torch.Tensor):
-        t, e = self.forward_parts(context, keys)
+        t, e = self.forward_parts(context, keys)[:2]
         if self.split_entity:
             e = combine(*e)
         return t, e
@@ -132,7 +139,8 @@ class CNN(nn.Module):
         e = self.entity_head(h)
         if self.copy_prior:
             e = e + self.copy_strength[1] * oh(last[:, 1], N_ENTITY)
-        return t, (group_entity(e) if self.split_entity else e)
+        e = group_entity(e) if self.split_entity else e
+        return (t, e, self.fate_head(h)) if self.fates else (t, e)
 
     @torch.no_grad()
     def predict(self, context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:

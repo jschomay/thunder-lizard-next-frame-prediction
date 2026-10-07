@@ -10,6 +10,9 @@ keys, and never shows them the real game again. Exports to the whiteboard "Play 
   hybrid  argmax, except lava cells and their neighbors are sampled (spreading and burning out
           are both per-cell dice rolls in the game)
   rule    the hand-written shift_rhythm rule
+  fates   (fate-head models, H13) terrain as in hybrid; every existing entity is moved by its
+          predicted fate, so none can duplicate or vanish by accident; new dinos are sampled only
+          in the 2-cell ring at the screen edge, where they can walk or scroll into view
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ import torch
 
 from tlfp.baselines import predict as rule_predict
 from tlfp.data import find_episodes, split_by_episode, KEYS
-from tlfp.model import build_model
+from tlfp.model import build_model, combine
+from tlfp.moves import MOVES, DIE, find_scroll, kind
 
 OUT = Path(".whiteboard/frame-prediction/rollouts.json")  # overridden by --out
 B36 = "0123456789abcdefghijklmnopqrstuvwxyz!@#$%^"
@@ -48,12 +52,52 @@ def model_step(model, history: list[np.ndarray], key: int, device, sample, gen: 
     def draw(logits):  # [1, C, 45, 45] -> sample a class per cell
         probs = logits.softmax(1)[0].permute(1, 2, 0).reshape(-1, logits.shape[1]).cpu()
         return torch.multinomial(probs, 1, generator=gen).reshape(45, 45).numpy()
+    if sample == "fates":
+        return fates_step(model, history, key, device, gen, draw)
     if sample == "hybrid":
         out = arg.copy()
         m = next_to_lava(history[-1][0]) | (history[-1][0] == 6)
         out[0][m] = draw(t_logits)[m]
         return out
     return np.stack([draw(t_logits), draw(e_logits)]).astype(np.uint8)
+
+
+@torch.no_grad()
+def fates_step(model, history, key, device, gen, draw):
+    ctx = torch.from_numpy(np.stack(history[-model.k:]).astype(np.int64))[None].to(device)
+    t_logits, e_parts, f_logits = model.forward_parts(ctx, torch.tensor([key], device=device))
+    e_logits = combine(*e_parts) if model.split_entity else e_parts
+    last = history[-1]
+    terrain = t_logits.argmax(1)[0].cpu().numpy().astype(np.uint8)
+    m = next_to_lava(last[0]) | (last[0] == 6)
+    terrain[m] = draw(t_logits)[m]
+    sy, sx = find_scroll(last[0], terrain)
+    fate = f_logits.argmax(1)[0].cpu().numpy()
+    ent = np.zeros((45, 45), np.uint8)
+    for y, x in zip(*np.nonzero(last[1])):
+        e, f = int(last[1][y, x]), int(fate[y, x])
+        if f == 6:  # gone
+            continue
+        if f == DIE or e == 41:
+            dy, dx, e = 0, 0, 41 if f == DIE else e
+        else:
+            dy, dx = MOVES[f]
+            if f > 0:  # moved: face the way it went (id = base + level*4 + dir)
+                base = 1 if e <= 20 else 21
+                e = base + ((e - base) // 4) * 4 + (f - 1)
+        ty, tx = y + dy - sy, x + dx - sx
+        if e <= 20 and (y, x) == (22, 22):
+            ty, tx = 22, 22  # the view follows the player
+        if not (0 <= ty < 45 and 0 <= tx < 45) or ent[ty, tx]:
+            ty, tx = y - sy, x - sx  # blocked or off-screen: stay
+            if not (0 <= ty < 45 and 0 <= tx < 45) or ent[ty, tx]:
+                continue
+        ent[ty, tx] = e
+    ring = np.ones((45, 45), bool); ring[2:-2, 2:-2] = False
+    new = draw(e_logits)
+    spawn = ring & (ent == 0) & (kind(new) == 2)
+    ent[spawn] = new[spawn]
+    return np.stack([terrain, ent]).astype(np.uint8)
 
 
 def main():
@@ -85,7 +129,7 @@ def main():
             s = max(range(model.k, len(acts) - args.ticks), key=lambda t: next_to_lava(obs[t][0]).sum(), default=model.k)
         n = min(args.ticks, len(acts) - s)
         seed_frames = [obs[s - i] for i in range(model.k - 1, -1, -1)]  # same real starting history for all
-        names = ["argmax", "hybrid", "sample"] + ([] if args.no_rule else ["rule"])
+        names = ["argmax", "hybrid", "sample"] + (["fates"] if model.fates else []) + ([] if args.no_rule else ["rule"])
         hist = {name: list(seed_frames) for name in names}
         rule_acts = list(acts[s - model.k + 1:s])  # the rule looks at the previous key too
         frames = {name: [enc(seed_frames[-1])] for name in ["real"] + names}
@@ -94,6 +138,8 @@ def main():
             hist["argmax"].append(model_step(model, hist["argmax"], key, device, False, gen))
             hist["sample"].append(model_step(model, hist["sample"], key, device, True, gen))
             hist["hybrid"].append(model_step(model, hist["hybrid"], key, device, "hybrid", gen))
+            if "fates" in hist:
+                hist["fates"].append(model_step(model, hist["fates"], key, device, "fates", gen))
             if "rule" in hist:
                 rule_acts.append(key)
                 h = np.stack(hist["rule"][-2:])

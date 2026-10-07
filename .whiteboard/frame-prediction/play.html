@@ -41,8 +41,9 @@ const INFO = {
   hybrid: ["model · hybrid", "argmax, but cells next to lava roll dice"],
   sample: ["model · sampled", "every cell rolls dice from its probabilities"],
   rule: ["hand-written rule", "shift_rhythm, fed its own output"],
+  fates: ["model · fates (H13)", "each dino/player moved by its predicted fate; new dinos only at the edge"],
 };
-const PALETTE = { argmax: "#d4202a", hybrid: "#e08a00", sample: "#7a3fd1", rule: "#8a8577" };
+const PALETTE = { argmax: "#d4202a", hybrid: "#e08a00", sample: "#7a3fd1", rule: "#8a8577", fates: "#1a8f5a" };
 let NAMES = [], COLORS = {};
 let D, ep, t = 0, timer = null, drift = {};
 document.getElementById("file").onchange = ev => loadFile(ev.target.value);
