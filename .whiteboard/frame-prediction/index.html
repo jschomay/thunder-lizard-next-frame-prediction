@@ -22,7 +22,7 @@ table{border-collapse:collapse;width:100%;font-size:13.5px}td,th{border-bottom:1
 .tag{display:inline-block;font-size:12px;padding:1px 6px;border-radius:10px;background:var(--code);margin-right:4px}
 </style></head>
 <body><main>
-<nav style="margin-bottom:6px"><a href="index.html" style="margin-right:14px;color:#2f6f4f"><b>Plan</b></a><a href="how.html" style="margin-right:14px;color:#2f6f4f">How it works</a><a href="data.html" style="margin-right:14px;color:#2f6f4f">Data</a><a href="predictions.html" style="margin-right:14px;color:#2f6f4f">Predictions</a><a href="play.html" style="margin-right:14px;color:#2f6f4f">Play in the net</a><a href="precedents.html" style="margin-right:14px;color:#2f6f4f">Precedents</a></nav>
+<nav style="margin-bottom:6px"><a href="index.html" style="margin-right:14px;color:#2f6f4f"><b>Plan</b></a><a href="how.html" style="margin-right:14px;color:#2f6f4f">How it works</a><a href="concepts.html" style="margin-right:14px;color:#2f6f4f">Model concepts</a><a href="inside.html" style="margin-right:14px;color:#2f6f4f">Inside the model</a><a href="data.html" style="margin-right:14px;color:#2f6f4f">Data</a><a href="predictions.html" style="margin-right:14px;color:#2f6f4f">Predictions</a><a href="play.html" style="margin-right:14px;color:#2f6f4f">Play in the net</a><a href="precedents.html" style="margin-right:14px;color:#2f6f4f">Precedents</a></nav>
 <h1>Predicting Thunder Lizard frames</h1>
 <p class="sub">Can a neural net learn to be the game engine? Given the last frame(s) and the key you pressed, it draws the next frame. Draw or comment on anything below.</p>
 
@@ -94,6 +94,32 @@ table{border-collapse:collapse;width:100%;font-size:13.5px}td,th{border-bottom:1
 <li data-wb="m5">Play inside the model in the browser (ONNX).</li>
 <li data-wb="m6">Stretch: a transformer over cell tokens, sampling for stochastic lava and dinos, and a bigger context.</li>
 </ol>
+<h2 data-wb="glossary-h">Glossary</h2>
+<div class="card" data-wb="glossary" id="glossary" style="font-size:14px">
+<b>Glossary</b>
+<table style="margin-top:6px">
+<tr data-wb="g-k"><td><b>k</b></td><td>How many past frames the model sees. k = 2 means the current frame plus the one before it. More history lets it infer rhythm and motion (H3).</td></tr>
+<tr data-wb="g-batch"><td><b>batch (64)</b></td><td>How many examples go through the model at once. The model adjusts after each batch, using the average error.</td></tr>
+<tr data-wb="g-channel"><td><b>channel</b></td><td>One number per cell, like one color in an image. Our input has k × 50 + 5 channels per cell.</td></tr>
+<tr data-wb="g-onehot"><td><b>one-hot</b></td><td>A category written as a row of 0s with a single 1 (GRASS = slot 3 on).</td></tr>
+<tr data-wb="g-filter"><td><b>filter / conv layer</b></td><td>A small learned weight table (3×3 × channels) slid over the grid. Each filter produces one new feature channel. A layer has many filters.</td></tr>
+<tr data-wb="g-rf"><td><b>receptive field</b></td><td>How far a cell can "see" after stacking layers: 3×3, then 5×5, then 7×7, …</td></tr>
+<tr data-wb="g-hyper"><td><b>hyperparameters</b></td><td>The settings we choose (k, learning rate, epochs, batch size, loss weighting, width/depth), as opposed to the weights the model learns.</td></tr>
+<tr data-wb="g-weights"><td><b>weights</b></td><td>The numbers inside the filters. Training adjusts them. Everything else (sizes, k, batch) is chosen by us.</td></tr>
+<tr data-wb="g-head"><td><b>head / body</b></td><td>The <b>body</b> (backbone) is the shared stack of layers that builds features. A <b>head</b> is a small final layer that turns those features into one specific answer. Ours: a terrain head and an entity head (H11 would split the entity head into three).</td></tr>
+<tr data-wb="g-logits"><td><b>logits / softmax</b></td><td>Logits are the raw scores a head outputs. Softmax turns them into probabilities that sum to 100%.</td></tr>
+<tr data-wb="g-logprob"><td><b>logprob</b></td><td>The (natural) log of a probability. Products of probabilities become sums, which keeps numbers stable.</td></tr>
+<tr data-wb="g-cross-entropy"><td><b>cross-entropy loss</b></td><td>The training objective: −log(probability given to the true answer). It heavily punishes being confidently wrong. <code>train/loss</code> is its average.</td></tr>
+<tr data-wb="g-argmax"><td><b>argmax / sampling</b></td><td>Argmax: take the most likely class. Sampling: a weighted random pick by probability (rolling the dice).</td></tr>
+<tr data-wb="g-temperature"><td><b>temperature / top-p</b></td><td>Knobs that reshape the dice before rolling: temperature sharpens (&lt;1) or flattens (&gt;1); top-p drops the unlikely tail.</td></tr>
+<tr data-wb="g-calibration"><td><b>calibration</b></td><td>Whether predicted probabilities match reality: things predicted at 10% should happen about 10% of the time.</td></tr>
+<tr data-wb="g-epoch"><td><b>epoch / step</b></td><td>Epoch = one full pass over the training data. Step = one batch and one weight update.</td></tr>
+<tr data-wb="g-validation"><td><b>validation / overfitting</b></td><td>Validation = held-out episodes, never trained on. Overfitting = training loss improves while validation gets worse (memorizing instead of generalizing).</td></tr>
+<tr data-wb="g-warm"><td><b>warm start / fine-tuning</b></td><td>Start training from an existing model's weights instead of random ones (H4).</td></tr>
+<tr data-wb="g-rollout"><td><b>rollout</b></td><td>Feeding the model its own predictions tick after tick: playing inside the net.</td></tr>
+<tr data-wb="g-u-net"><td><b>U-Net / skip connection</b></td><td>A CNN that shrinks the grid to see wide, then grows it back. Skip connections carry full-detail features straight across to the output side.</td></tr>
+<tr data-wb="g-error"><td><b>error analysis</b></td><td>Slicing the model's mistakes into categories until a pattern shows up (How it works, section 6).</td></tr>
+</table></div>
 </main>
 <script>
 const glyph={0:'༄',1:'≈',2:'˚',3:'ɷ',4:'ɰ',5:'ψ',6:'༉',8:'Ԇ',11:'⏵',12:'↼',13:'-'};

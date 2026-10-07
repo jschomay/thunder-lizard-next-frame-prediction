@@ -1,0 +1,214 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inside the Model</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f;--plan:#a35a12;--code:#f1efe9}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 80px}
+nav a{margin-right:14px;color:var(--acc)}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:36px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+h3{font-size:16px;margin:18px 0 6px}
+.sub{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:12px 0}
+pre{font-family:ui-monospace,Menlo,monospace;background:var(--code);border-radius:6px;padding:10px;overflow-x:auto;font-size:12.5px;line-height:1.35;margin:8px 0}
+code{font-family:ui-monospace,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;font-size:13px}
+.built{color:var(--acc);font-weight:600}.planned{color:var(--plan);font-weight:600}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.sw{display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:12.5px}.sw i{width:12px;height:12px;display:inline-block}
+canvas{image-rendering:pixelated;border-radius:4px;display:block}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
+.thumb{text-align:center;font-size:11.5px;color:var(--mut)}
+.thumb.ctx canvas{outline:3px solid #2f6f4f}.thumb.tgt canvas{outline:3px solid #a35a12}
+.btn{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--fg);background:var(--card);border-radius:4px;cursor:pointer}
+table{border-collapse:collapse;font-size:13.5px;width:100%}td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+svg text{font-family:system-ui,sans-serif}
+.svgwrap{overflow-x:auto}
+#cellinfo{font-family:ui-monospace,Menlo,monospace;font-size:13px;min-height:20px}
+</style>
+</head>
+<body><main>
+<nav><a href="index.html">Plan</a><a href="how.html">How it works</a><a href="concepts.html">Model concepts</a><a href="inside.html"><b>Inside the model</b></a><a href="data.html">Data</a><a href="predictions.html">Predictions</a><a href="play.html">Play in the net</a><a href="precedents.html">Precedents</a></nav>
+<h1>Inside the model</h1>
+<p class="sub">What goes into the CNN for each cell, what one filter computes, and what every layer produces on a real frame.</p>
+<h2 data-wb="py-input-vector">1. What the model actually receives, per cell</h2>
+<p>The grid stays a grid. Frames, layers, and the key are <b>stacked as channels at each cell</b>, like an image where each pixel has 105 numbers instead of 3 (R, G, B). <b>Click any cell</b> to see its vector. The frames are real ticks (t−1 and t, k = 2) from a real recorded stage-1 tick.</p>
+<div class="row">
+<div data-wb="vec-grid"><canvas id="vgrid" style="cursor:crosshair"></canvas>
+<div style="margin-top:6px;font-size:13px">CNN layers stacked: <button class="btn" onclick="setDepth(-1)">−</button> <b id="depth">1</b> <button class="btn" onclick="setDepth(1)">+</button> → each output cell sees a <b id="rf">3×3</b> area</div></div>
+<div class="card" style="flex:1 1 360px;margin-top:0" data-wb="vec-detail">
+<div id="vcell" style="font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-bottom:6px"></div>
+<div id="vec"></div>
+<p class="sub" style="font-size:12.5px;margin:8px 0 0">Each square is one number in the cell's input: <b style="color:#1d1d1b">dark = 1</b>, light = 0. "One-hot" means exactly one square per group is on. That is how a category becomes numbers without implying LEFT is "bigger" than UP.</p>
+</div></div>
+<div class="card" data-wb="vec-shapes">
+<pre style="margin:0">per cell:   8 terrain(t−1) + 42 entity(t−1) + 8 terrain(t) + 42 entity(t) + 5 key  = 105
+whole input: 105 channels × 45 × 45      (k = 4 would be 4×50 + 5 = 205 channels)
+key:        the same 5 numbers copied into every cell. It has no position, so every cell "hears" it.
+            (Alternative to test later: FiLM, where the key adjusts features mid-network instead.)</pre></div>
+<p><b>The sliding window:</b> one CNN layer looks at a 3×3 patch, i.e. 9 cells × 105 numbers, and computes new features for the center cell. The <i>same</i> learned weights are reused at every position. Those weights encode rules like "player facing right, key RIGHT, grass to the right → the player will be there next." Stacking layers grows what each cell can "see" (press + above). About 10 layers covers ±10 cells, the distance at which dinos notice the player.</p>
+
+<h2 data-wb="py-filter">2. One filter, one position</h2>
+<p>This zooms into one step of one conv layer at the cell you clicked above. To keep it readable, it shows only the <b>8 terrain channels of frame t</b>, 72 of the 9 × 105 = 945 real inputs. The weights here are a made-up example filter that responds to <b>"grass to the right"</b>. Real weights are learned.</p>
+<div class="row" data-wb="filter-demo">
+<div class="card" style="flex:1 1 300px;margin-top:0"><div class="sub" style="font-size:12.5px">3×3 patch around the cell (terrain classes)</div><pre id="fpatch" style="font-size:15px"></pre></div>
+<div class="card" style="flex:1 1 300px;margin-top:0"><div class="sub" style="font-size:12.5px">example filter weights, GRASS channel only (all other channels 0)</div><pre style="font-size:15px">  0.0  0.0  0.5
+  0.0  0.0  1.0
+  0.0  0.0  0.5</pre></div>
+<div class="card" style="flex:1 1 260px;margin-top:0"><div class="sub" style="font-size:12.5px">multiply matching numbers, add up</div><pre id="fsum" style="font-size:13px"></pre></div>
+</div>
+<p>That single number becomes this cell's value in the filter's output channel. The filter then slides to the next cell and repeats with <b>the same weights</b>. That gives a 45×45 map of "how much grass is to the right" everywhere. With 64 filters you get 64 such maps, and those are the input to the next layer.</p>
+
+
+<h2 data-wb="inside-cnn">3. Inside the CNN: one real frame, layer by layer</h2>
+<p>This is the trained 2-frame model processing one real held-out tick (the player holds <b id="lkey"></b>). Each small square is a full 45×45 map. Inputs are in game colors; feature maps are heatmaps (bright = the feature is strongly "on" in that cell). Every layer really has 64 feature maps; the 8 most active are shown. <b>Click a cell</b> in the "frame t" input to follow that one cell's vector through every layer.</p>
+<div class="svgwrap" data-wb="cnn-flow"><div id="flow" style="display:flex;gap:10px;align-items:flex-start;min-width:1100px"></div></div>
+<div class="card" data-wb="cnn-cellvec">
+<div id="cvtitle" style="font-family:ui-monospace,Menlo,monospace;font-size:13px"></div>
+<div id="cvrows"></div>
+<p class="sub" style="font-size:12.5px;margin:6px 0 0">Each row is the selected cell's vector at that stage: 105 input numbers, then 64 features per layer, then the head outputs. Taller bar = bigger number. Nobody designed these features. Training found whatever 64 numbers per cell made the next frame easiest to predict, which is why they're hard to name.</p>
+</div>
+
+
+</main>
+<script src="grid.js"></script>
+<script>
+let WIN_EP = null, W = 1;
+fetch("episodes.json").then(r => r.json()).then(eps => {
+  WIN_EP = eps.find(e => e.name.startsWith("stage1")) || eps[0];
+  W = Math.max(1, WIN_EP.actions.findIndex(a => a !== "NONE"));
+  vecSetup();
+});
+// ---- 5e: per-cell input vector ----
+let VX = 22, VY = 22, DEPTH = 1;
+const VC = 7;
+function vecSetup() {
+  const c = document.getElementById("vgrid");
+  c.onclick = ev => { const r = c.getBoundingClientRect(); VX = Math.floor((ev.clientX - r.left) / VC); VY = Math.floor((ev.clientY - r.top) / VC); vecDraw(); };
+  vecDraw();
+}
+function setDepth(d) { DEPTH = Math.max(1, Math.min(12, DEPTH + d)); vecDraw(); }
+function vecDraw() {
+  const ep = WIN_EP, t = Math.max(1, W), c = document.getElementById("vgrid");
+  drawGrid(c, ep.terrain[t], ep.entity[t], { cell: VC });
+  const g = c.getContext("2d"), r = DEPTH;  // receptive field radius = depth for 3x3 convs
+  g.fillStyle = "rgba(255,255,255,.22)"; g.fillRect((VX - r) * VC, (VY - r) * VC, (2 * r + 1) * VC, (2 * r + 1) * VC);
+  g.strokeStyle = "#fff"; g.lineWidth = 2; g.strokeRect((VX - r) * VC, (VY - r) * VC, (2 * r + 1) * VC, (2 * r + 1) * VC);
+  g.strokeStyle = "#000"; g.lineWidth = 2; g.strokeRect(VX * VC, VY * VC, VC, VC);
+  document.getElementById("depth").textContent = DEPTH;
+  document.getElementById("rf").textContent = `${2 * r + 1}×${2 * r + 1}`;
+  const i = VY * 45 + VX, key = ep.actions[t];
+  const groups = [
+    ["terrain, frame t−1", 8, +ep.terrain[t - 1][i], v => TERRAIN_NAMES[v]],
+    ["entity, frame t−1", 42, B36.indexOf(ep.entity[t - 1][i]), entName],
+    ["terrain, frame t", 8, +ep.terrain[t][i], v => TERRAIN_NAMES[v]],
+    ["entity, frame t", 42, B36.indexOf(ep.entity[t][i]), entName],
+    ["key (same in every cell)", 5, ["NONE", "UP", "RIGHT", "DOWN", "LEFT"].indexOf(key), v => ["NONE", "UP", "RIGHT", "DOWN", "LEFT"][v]],
+  ];
+  filterDraw();
+  document.getElementById("vcell").textContent = `cell (${VX},${VY}) · tick ${t} · 105 numbers`;
+  document.getElementById("vec").innerHTML = groups.map(([label, n, on, name]) =>
+    `<div style="margin:4px 0"><div style="font-size:12px;color:#6b6a65">${label}: <b style="color:#1d1d1b">${name(on)}</b> (slot ${on})</div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:1px;margin-top:2px">` +
+    Array.from({ length: n }, (_, j) => `<span title="slot ${j}" style="width:9px;height:9px;display:inline-block;background:${j === on ? "#1d1d1b" : "#e4e1d8"}"></span>`).join("") +
+    `</div></div>`).join("");
+}
+
+function filterDraw() {
+  const ep = WIN_EP, t = Math.max(1, W), W3 = [[0,0,.5],[0,0,1],[0,0,.5]];
+  let patch = "", terms = [], sum = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = VX + dx, y = VY + dy;
+      const v = (x < 0 || y < 0 || x > 44 || y > 44) ? -1 : +ep.terrain[t][y * 45 + x];
+      patch += (v < 0 ? "  pad " : TERRAIN_NAMES[v].padEnd(6).slice(0, 6) + " ");
+      const w = W3[dy + 1][dx + 1], isGrass = v === 3 ? 1 : 0;
+      if (w) { terms.push(`${w} × ${isGrass} (${v < 0 ? "pad" : TERRAIN_NAMES[v]})`); sum += w * isGrass; }
+    }
+    patch += "\n";
+  }
+  document.getElementById("fpatch").textContent = patch;
+  document.getElementById("fsum").textContent = terms.join("\n+ ") + `\n─────────────\n= ${sum}   (max 2.0: grass all down the right side)`;
+}
+
+function entName(v) { const d = decodeEntity(v); return !d ? "empty" : d.kind === "skeleton" ? "skeleton" : `${d.kind} L${d.level} ${DIR_ARROWS[d.dir]}`; }
+
+
+
+
+// ---- 10: inside the CNN ----
+let LY = null, LX = 22, LYc = 22;
+fetch("layers.json").then(r => r.json()).then(d => { LY = d; document.getElementById("lkey").textContent = d.key; layersDraw(); });
+const unb64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+function heat(canvas, arr, size, mark) {
+  canvas.width = canvas.height = size; const g = canvas.getContext("2d"), img = g.createImageData(45, 45);
+  for (let i = 0; i < 2025; i++) { const v = arr[i]; img.data.set([Math.min(255, v * 1.6), v, Math.max(0, 140 - v) * 0.6 + v * 0.4, 255], i * 4); }
+  const tmp = document.createElement("canvas"); tmp.width = tmp.height = 45; tmp.getContext("2d").putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = false; g.drawImage(tmp, 0, 0, size, size);
+  if (mark) { const c = size / 45; g.strokeStyle = "#00e5ff"; g.lineWidth = 2; g.strokeRect(LX * c - 1, LYc * c - 1, c + 2, c + 2); }
+}
+function frameThumb(t, e, size) {
+  const c = document.createElement("canvas"); const es = e.map(v => B36[v]).join("");
+  drawGrid(c, t, es, { cell: size / 45 });
+  const g = c.getContext("2d"), cs = size / 45; g.strokeStyle = "#00e5ff"; g.lineWidth = 2; g.strokeRect(LX * cs - 1, LYc * cs - 1, cs + 2, cs + 2);
+  return c;
+}
+function col(title, sub, items) {
+  const d = document.createElement("div"); d.style.cssText = "text-align:center;font-size:12px";
+  d.innerHTML = `<b style="font-size:12.5px">${title}</b><div class="sub" style="font-size:11px;margin-bottom:4px">${sub}</div>`;
+  const box = document.createElement("div"); box.style.cssText = "display:grid;grid-template-columns:repeat(2,auto);gap:3px;justify-content:center";
+  items.forEach(([el, label]) => { const w = document.createElement("div"); w.appendChild(el); w.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">${label}</div>`); box.appendChild(w); });
+  d.appendChild(box); return d;
+}
+function arrow() { const a = document.createElement("div"); a.style.cssText = "align-self:center;font-size:22px;color:#999"; a.textContent = "→"; return a; }
+function layersDraw() {
+  if (!LY) return;
+  const flow = document.getElementById("flow"); flow.innerHTML = ""; const S = 62;
+  const keyBox = document.createElement("div"); keyBox.style.cssText = `width:${S}px;display:flex;flex-direction:column;justify-content:center;font-size:10px;border:1px solid #ccc;background:#fff`;
+  keyBox.innerHTML = ["NONE", "UP", "RIGHT", "DOWN", "LEFT"].map(k => `<div style="background:${k === LY.key ? "#1d1d1b" : "#eee"};color:${k === LY.key ? "#fff" : "#999"};margin:1px">${k}</div>`).join("");
+  const nowT = frameThumb(LY.now_t, LY.now_e, 135);
+  nowT.style.cursor = "crosshair";
+  nowT.onclick = ev => { const r = ev.target.getBoundingClientRect(); LX = Math.floor((ev.clientX - r.left) / r.width * 45); LYc = Math.floor((ev.clientY - r.top) / r.height * 45); layersDraw(); };
+  const inp = document.createElement("div"); inp.style.cssText = "text-align:center;font-size:12px";
+  inp.innerHTML = `<b style="font-size:12.5px">input</b><div class="sub" style="font-size:11px;margin-bottom:4px">105 channels per cell</div>`;
+  const g = document.createElement("div"); g.style.cssText = "display:flex;flex-direction:column;gap:3px;align-items:center";
+  const prevT = frameThumb(LY.prev_t, LY.prev_e, 90);
+  g.append(prevT); g.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">frame t−1 (50 ch)</div>`);
+  g.append(nowT); g.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65"><b>frame t (50 ch) · click</b></div>`);
+  g.append(keyBox); g.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">key (5 ch, every cell)</div>`);
+  inp.appendChild(g); flow.appendChild(inp);
+  LY.layers.forEach((L, li) => {
+    flow.appendChild(arrow());
+    flow.appendChild(col(`layer ${li + 1}`, `64 maps · sees ${2 * li + 3}×${2 * li + 3}`, L.maps.map((m, j) => { const c = document.createElement("canvas"); heat(c, unb64(m), S, true); return [c, `#${L.idx[j]}`]; })));
+  });
+  flow.appendChild(arrow());
+  const tp = LY.terrain_probs.map((m, i) => { const c = document.createElement("canvas"); heat(c, unb64(m), S, true); return [c, TERRAIN_NAMES[i]]; });
+  const pp = document.createElement("canvas"); heat(pp, unb64(LY.player_prob), S, true);
+  const ept = document.createElement("canvas"); heat(ept, unb64(LY.empty_prob), S, true);
+  flow.appendChild(col("terrain head", "P(class) per cell", tp.filter((_, i) => [0, 1, 3, 4, 5, 2].includes(i))));
+  flow.appendChild(col("entity head", "P(class) per cell", [[pp, "P(any player)"], [ept, "P(empty)"]]));
+  flow.appendChild(arrow());
+  const out = document.createElement("div"); out.style.cssText = "text-align:center;font-size:12px";
+  out.innerHTML = `<b style="font-size:12.5px">prediction</b><div class="sub" style="font-size:11px;margin-bottom:4px">argmax per cell</div>`;
+  out.appendChild(frameThumb(LY.pred_t, LY.pred_e, 135)); out.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65;margin:3px 0">model's next frame</div>`);
+  out.appendChild(frameThumb(LY.truth_t, LY.truth_e, 90)); out.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">real next frame</div>`);
+  flow.appendChild(out);
+  // per-cell vectors
+  const i = LYc * 45 + LX, rows = [];
+  const bars = (vals, color) => `<div style="display:flex;align-items:flex-end;gap:1px;height:34px">${vals.map(v => `<span style="width:5px;height:${Math.max(1, v * 34)}px;background:${color}"></span>`).join("")}</div>`;
+  const inVec = []; const tv = +LY.prev_t[i], ev = LY.prev_e[i], tn = +LY.now_t[i], en = LY.now_e[i];
+  for (let c = 0; c < 8; c++) inVec.push(c === tv ? 1 : 0); for (let c = 0; c < 42; c++) inVec.push(c === ev ? 1 : 0);
+  for (let c = 0; c < 8; c++) inVec.push(c === tn ? 1 : 0); for (let c = 0; c < 42; c++) inVec.push(c === en ? 1 : 0);
+  ["NONE", "UP", "RIGHT", "DOWN", "LEFT"].forEach(k => inVec.push(k === LY.key ? 1 : 0));
+  rows.push(["input (105)", bars(inVec, "#1d1d1b"), `t−1: ${TERRAIN_NAMES[tv]}${ev ? " + entity" : ""} · t: ${TERRAIN_NAMES[tn]}${en ? " + entity" : ""} · key ${LY.key}`]);
+  LY.layers.forEach((L, li) => { const v = unb64(L.vec).slice(i * 64, i * 64 + 64); rows.push([`layer ${li + 1} (64)`, bars(Array.from(v, x => x / 255), "#c2410c"), ""]); });
+  const tprob = LY.terrain_probs.map(m => unb64(m)[i] / 255);
+  rows.push(["terrain head (8)", bars(tprob, "#2f6f4f"), "→ " + TERRAIN_NAMES[tprob.indexOf(Math.max(...tprob))] + ` ${(Math.max(...tprob) * 100).toFixed(0)}%`]);
+  document.getElementById("cvtitle").textContent = `cell (${LX},${LYc})`;
+  document.getElementById("cvrows").innerHTML = rows.map(([a, b, c]) => `<div style="display:flex;align-items:flex-end;gap:10px;margin:4px 0"><span style="width:120px;font-size:12px">${a}</span>${b}<span style="font-size:12px;color:#6b6a65">${c}</span></div>`).join("");
+}
+
+
+
+</script>
+<script src="whiteboard.js"></script>
+</body></html>
