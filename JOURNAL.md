@@ -329,3 +329,19 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - `--unet`: a shrink-and-grow branch (45→23→12→back) added onto the full-size features, with its last layer zero-initialized. **Verified:** with stage-2 weights loaded, its output is identical to `s2-warm-k4`.
 - `--init` now copies only the weights that match; new parts start fresh.
 - Speed (CPU, 1 frame): CNN 3.3 ms → U-Net+split 4.7 ms (about 1.4×, well inside the 10× budget). Parameters: 0.30M → 0.57M.
+
+## 2026-10-07 — Run s3-cnn-split (CNN + H11, warm from s2-warm-k4, 3 epochs, 14.4 min)
+- Validation dynamic accuracy **68.4%**. On stage 3 the hand rule gets 57.2% and copy-last 0% (the rule knows nothing about dinos or lava).
+- Breakdown on the validation split, compared with the stage-2 model applied unchanged:
+
+| | s2-warm-k4 (never saw dinos) | s3-cnn-split |
+|---|---|---|
+| player cell exactly right | 89.1% | **94.5%** |
+| player cell right when it moved | 23.3% | **48.3%** |
+| frames with no player predicted (of 6,924) | 452 | **64** |
+| dino cell exactly right | 0% | 28.2% |
+| dino cell right when it moved | 0% | 9.8% |
+| dino cells predicted / real dino cells | 0% | 74.7% |
+
+- H11 looks good for the player in one-step predictions (frames missing the player fell 7×). Rollouts are still needed to confirm it.
+- Dinos are partly learned. The model places many of them but often gets the exact class wrong (possibly facing or level) and rarely gets a moving dino right. Next: break dino errors down by kind / facing / level, then run rollouts, then the U-Net run (s3-unet-split, ~20 min going by this run's speed).
