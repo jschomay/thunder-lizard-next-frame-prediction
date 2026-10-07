@@ -42,6 +42,19 @@ svg text{font-family:system-ui,sans-serif}
 <tr data-wb="g-rf"><td><b>receptive field</b></td><td>How far a cell can "see" after stacking layers: 3×3, then 5×5, then 7×7, …</td></tr>
 <tr data-wb="g-hyper"><td><b>hyperparameters</b></td><td>The settings we choose (k, learning rate, epochs, batch size, loss weighting, width/depth), as opposed to the weights the model learns.</td></tr>
 <tr data-wb="g-weights"><td><b>weights</b></td><td>The numbers inside the filters. Training adjusts them. Everything else (sizes, k, batch) is chosen by us.</td></tr>
+<tr data-wb="g-head"><td><b>head / body</b></td><td>The <b>body</b> (backbone) is the shared stack of layers that builds features. A <b>head</b> is a small final layer that turns those features into one specific answer. Ours: a terrain head and an entity head (H11 would split the entity head into three).</td></tr>
+<tr data-wb="g-logits"><td><b>logits / softmax</b></td><td>Logits are the raw scores a head outputs. Softmax turns them into probabilities that sum to 100%.</td></tr>
+<tr data-wb="g-logprob"><td><b>logprob</b></td><td>The (natural) log of a probability. Products of probabilities become sums, which keeps numbers stable.</td></tr>
+<tr data-wb="g-cross-entropy"><td><b>cross-entropy loss</b></td><td>The training objective: −log(probability given to the true answer). It heavily punishes being confidently wrong. <code>train/loss</code> is its average.</td></tr>
+<tr data-wb="g-argmax"><td><b>argmax / sampling</b></td><td>Argmax: take the most likely class. Sampling: a weighted random pick by probability (rolling the dice).</td></tr>
+<tr data-wb="g-temperature"><td><b>temperature / top-p</b></td><td>Knobs that reshape the dice before rolling: temperature sharpens (&lt;1) or flattens (&gt;1); top-p drops the unlikely tail.</td></tr>
+<tr data-wb="g-calibration"><td><b>calibration</b></td><td>Whether predicted probabilities match reality: things predicted at 10% should happen about 10% of the time.</td></tr>
+<tr data-wb="g-epoch"><td><b>epoch / step</b></td><td>Epoch = one full pass over the training data. Step = one batch and one weight update.</td></tr>
+<tr data-wb="g-validation"><td><b>validation / overfitting</b></td><td>Validation = held-out episodes, never trained on. Overfitting = training loss improves while validation gets worse (memorizing instead of generalizing).</td></tr>
+<tr data-wb="g-warm"><td><b>warm start / fine-tuning</b></td><td>Start training from an existing model's weights instead of random ones (H4).</td></tr>
+<tr data-wb="g-rollout"><td><b>rollout</b></td><td>Feeding the model its own predictions tick after tick: playing inside the net.</td></tr>
+<tr data-wb="g-u-net"><td><b>U-Net / skip connection</b></td><td>A CNN that shrinks the grid to see wide, then grows it back. Skip connections carry full-detail features straight across to the output side.</td></tr>
+<tr data-wb="g-error"><td><b>error analysis</b></td><td>Slicing the model's mistakes into categories until a pattern shows up (section 6).</td></tr>
 </table></div>
 
 <h2 data-wb="pipeline">1. The whole pipeline</h2>
@@ -266,6 +279,15 @@ key:        the same 5 numbers copied into every cell. It has no position, so ev
 </svg></div>
 <p><b>Keeping the pretrained weights:</b> with one trick we don't lose the warm start. Build the U-Net so its <b>full-size path is exactly the current CNN</b>, copy those weights in, and start the shrink/grow branch at <b>zero</b>, so it adds nothing at first. At step 0 the new model behaves exactly like the old one, then gradually learns to use the wide view. Without the trick, only the pieces with matching shapes (the input layer and output heads) could be copied.</p>
 
+<h2 data-wb="inside-cnn">10. Inside the CNN: one real frame, layer by layer</h2>
+<p>This is the trained 2-frame model processing one real held-out tick (the player holds <b id="lkey"></b>). Each small square is a full 45×45 map. Inputs are in game colors; feature maps are heatmaps (bright = the feature is strongly "on" in that cell). Every layer really has 64 feature maps; the 8 most active are shown. <b>Click a cell</b> in the "frame t" input to follow that one cell's vector through every layer.</p>
+<div class="svgwrap" data-wb="cnn-flow"><div id="flow" style="display:flex;gap:10px;align-items:flex-start;min-width:1100px"></div></div>
+<div class="card" data-wb="cnn-cellvec">
+<div id="cvtitle" style="font-family:ui-monospace,Menlo,monospace;font-size:13px"></div>
+<div id="cvrows"></div>
+<p class="sub" style="font-size:12.5px;margin:6px 0 0">Each row is the selected cell's vector at that stage: 105 input numbers, then 64 features per layer, then the head outputs. Taller bar = bigger number. Nobody designed these features. Training found whatever 64 numbers per cell made the next frame easiest to predict, which is why they're hard to name.</p>
+</div>
+
 </main>
 <script src="grid.js"></script>
 <script>
@@ -418,6 +440,79 @@ function unetDraw() {
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("u0").onclick = ev => { const r = ev.target.getBoundingClientRect(); UX = Math.floor((ev.clientX - r.left) / 6); UY = Math.floor((ev.clientY - r.top) / 6); unetDraw(); };
 });
+
+
+// ---- 10: inside the CNN ----
+let LY = null, LX = 22, LYc = 22;
+fetch("layers.json").then(r => r.json()).then(d => { LY = d; document.getElementById("lkey").textContent = d.key; layersDraw(); });
+const unb64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+function heat(canvas, arr, size, mark) {
+  canvas.width = canvas.height = size; const g = canvas.getContext("2d"), img = g.createImageData(45, 45);
+  for (let i = 0; i < 2025; i++) { const v = arr[i]; img.data.set([Math.min(255, v * 1.6), v, Math.max(0, 140 - v) * 0.6 + v * 0.4, 255], i * 4); }
+  const tmp = document.createElement("canvas"); tmp.width = tmp.height = 45; tmp.getContext("2d").putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = false; g.drawImage(tmp, 0, 0, size, size);
+  if (mark) { const c = size / 45; g.strokeStyle = "#00e5ff"; g.lineWidth = 2; g.strokeRect(LX * c - 1, LYc * c - 1, c + 2, c + 2); }
+}
+function frameThumb(t, e, size) {
+  const c = document.createElement("canvas"); const es = e.map(v => B36[v]).join("");
+  drawGrid(c, t, es, { cell: size / 45 });
+  const g = c.getContext("2d"), cs = size / 45; g.strokeStyle = "#00e5ff"; g.lineWidth = 2; g.strokeRect(LX * cs - 1, LYc * cs - 1, cs + 2, cs + 2);
+  return c;
+}
+function col(title, sub, items) {
+  const d = document.createElement("div"); d.style.cssText = "text-align:center;font-size:12px";
+  d.innerHTML = `<b style="font-size:12.5px">${title}</b><div class="sub" style="font-size:11px;margin-bottom:4px">${sub}</div>`;
+  const box = document.createElement("div"); box.style.cssText = "display:grid;grid-template-columns:repeat(2,auto);gap:3px;justify-content:center";
+  items.forEach(([el, label]) => { const w = document.createElement("div"); w.appendChild(el); w.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">${label}</div>`); box.appendChild(w); });
+  d.appendChild(box); return d;
+}
+function arrow() { const a = document.createElement("div"); a.style.cssText = "align-self:center;font-size:22px;color:#999"; a.textContent = "→"; return a; }
+function layersDraw() {
+  if (!LY) return;
+  const flow = document.getElementById("flow"); flow.innerHTML = ""; const S = 62;
+  const keyBox = document.createElement("div"); keyBox.style.cssText = `width:${S}px;display:flex;flex-direction:column;justify-content:center;font-size:10px;border:1px solid #ccc;background:#fff`;
+  keyBox.innerHTML = ["NONE", "UP", "RIGHT", "DOWN", "LEFT"].map(k => `<div style="background:${k === LY.key ? "#1d1d1b" : "#eee"};color:${k === LY.key ? "#fff" : "#999"};margin:1px">${k}</div>`).join("");
+  const nowT = frameThumb(LY.now_t, LY.now_e, 135);
+  nowT.style.cursor = "crosshair";
+  nowT.onclick = ev => { const r = ev.target.getBoundingClientRect(); LX = Math.floor((ev.clientX - r.left) / r.width * 45); LYc = Math.floor((ev.clientY - r.top) / r.height * 45); layersDraw(); };
+  const inp = document.createElement("div"); inp.style.cssText = "text-align:center;font-size:12px";
+  inp.innerHTML = `<b style="font-size:12.5px">input</b><div class="sub" style="font-size:11px;margin-bottom:4px">105 channels per cell</div>`;
+  const g = document.createElement("div"); g.style.cssText = "display:flex;flex-direction:column;gap:3px;align-items:center";
+  const prevT = frameThumb(LY.prev_t, LY.prev_e, 90);
+  g.append(prevT); g.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">frame t−1 (50 ch)</div>`);
+  g.append(nowT); g.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65"><b>frame t (50 ch) · click</b></div>`);
+  g.append(keyBox); g.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">key (5 ch, every cell)</div>`);
+  inp.appendChild(g); flow.appendChild(inp);
+  LY.layers.forEach((L, li) => {
+    flow.appendChild(arrow());
+    flow.appendChild(col(`layer ${li + 1}`, `64 maps · sees ${2 * li + 3}×${2 * li + 3}`, L.maps.map((m, j) => { const c = document.createElement("canvas"); heat(c, unb64(m), S, true); return [c, `#${L.idx[j]}`]; })));
+  });
+  flow.appendChild(arrow());
+  const tp = LY.terrain_probs.map((m, i) => { const c = document.createElement("canvas"); heat(c, unb64(m), S, true); return [c, TERRAIN_NAMES[i]]; });
+  const pp = document.createElement("canvas"); heat(pp, unb64(LY.player_prob), S, true);
+  const ept = document.createElement("canvas"); heat(ept, unb64(LY.empty_prob), S, true);
+  flow.appendChild(col("terrain head", "P(class) per cell", tp.filter((_, i) => [0, 1, 3, 4, 5, 2].includes(i))));
+  flow.appendChild(col("entity head", "P(class) per cell", [[pp, "P(any player)"], [ept, "P(empty)"]]));
+  flow.appendChild(arrow());
+  const out = document.createElement("div"); out.style.cssText = "text-align:center;font-size:12px";
+  out.innerHTML = `<b style="font-size:12.5px">prediction</b><div class="sub" style="font-size:11px;margin-bottom:4px">argmax per cell</div>`;
+  out.appendChild(frameThumb(LY.pred_t, LY.pred_e, 135)); out.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65;margin:3px 0">model's next frame</div>`);
+  out.appendChild(frameThumb(LY.truth_t, LY.truth_e, 90)); out.insertAdjacentHTML("beforeend", `<div style="font-size:10px;color:#6b6a65">real next frame</div>`);
+  flow.appendChild(out);
+  // per-cell vectors
+  const i = LYc * 45 + LX, rows = [];
+  const bars = (vals, color) => `<div style="display:flex;align-items:flex-end;gap:1px;height:34px">${vals.map(v => `<span style="width:5px;height:${Math.max(1, v * 34)}px;background:${color}"></span>`).join("")}</div>`;
+  const inVec = []; const tv = +LY.prev_t[i], ev = LY.prev_e[i], tn = +LY.now_t[i], en = LY.now_e[i];
+  for (let c = 0; c < 8; c++) inVec.push(c === tv ? 1 : 0); for (let c = 0; c < 42; c++) inVec.push(c === ev ? 1 : 0);
+  for (let c = 0; c < 8; c++) inVec.push(c === tn ? 1 : 0); for (let c = 0; c < 42; c++) inVec.push(c === en ? 1 : 0);
+  ["NONE", "UP", "RIGHT", "DOWN", "LEFT"].forEach(k => inVec.push(k === LY.key ? 1 : 0));
+  rows.push(["input (105)", bars(inVec, "#1d1d1b"), `t−1: ${TERRAIN_NAMES[tv]}${ev ? " + entity" : ""} · t: ${TERRAIN_NAMES[tn]}${en ? " + entity" : ""} · key ${LY.key}`]);
+  LY.layers.forEach((L, li) => { const v = unb64(L.vec).slice(i * 64, i * 64 + 64); rows.push([`layer ${li + 1} (64)`, bars(Array.from(v, x => x / 255), "#c2410c"), ""]); });
+  const tprob = LY.terrain_probs.map(m => unb64(m)[i] / 255);
+  rows.push(["terrain head (8)", bars(tprob, "#2f6f4f"), "→ " + TERRAIN_NAMES[tprob.indexOf(Math.max(...tprob))] + ` ${(Math.max(...tprob) * 100).toFixed(0)}%`]);
+  document.getElementById("cvtitle").textContent = `cell (${LX},${LYc})`;
+  document.getElementById("cvrows").innerHTML = rows.map(([a, b, c]) => `<div style="display:flex;align-items:flex-end;gap:10px;margin:4px 0"><span style="width:120px;font-size:12px">${a}</span>${b}<span style="font-size:12px;color:#6b6a65">${c}</span></div>`).join("");
+}
 
 function slide(d) { W = Math.max(0, Math.min(WIN_EP.actions.length - 1, W + d)); renderThumbs(); vecDraw(); }
 function renderThumbs() {
