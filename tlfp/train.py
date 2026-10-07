@@ -19,6 +19,8 @@ from tlfp.data import find_episodes, split_by_episode
 from tlfp.metrics import add, frame_metrics, summarize
 from tlfp.model import build_model, split_ids
 
+print = __import__("functools").partial(print, flush=True)  # live logs when redirected to a file
+
 
 class Frames:
     """All episodes in one in-memory uint8 tensor, with window indices that never cross episodes."""
