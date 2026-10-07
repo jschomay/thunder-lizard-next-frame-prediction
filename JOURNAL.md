@@ -350,3 +350,15 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - On the same stage-3 validation games, the untouched **s2-warm-k4 scores 73.1%** dynamic accuracy (changed 84.2%, exact 13.6%), versus 68.4% for s3-cnn-split. Most of the score comes from terrain scrolling and lava, not from the few dino cells.
 - Cause (from the log): the warm start collapsed to 49% at 0.25 epoch, then slowly recovered to 68%. The split heads started random, and at lr 1e-3 their early gradients scrambled the pretrained body.
 - Fix for the next run: initialize the split heads from the old 42-way head, and/or lower the LR for warm starts (~3e-4). Also, always score the starting checkpoint on the new data as a baseline before training.
+
+## 2026-10-07 — s3-cnn-split-v2 also got worse, and the cause
+- v2 (split heads grouped from the 42 scores, lr 3e-4): starts at 73.1%, best 68.3% (0.25 epoch), ends at 66.6%. It also ran 3× slower (47 min) with the GPU at 100%; still to be explained.
+- Comparison on the stage-3 validation set, s2-warm-k4 → v2:
+  - terrain changed-cell acc 85.5% → 77.6%
+  - entity changed-cell acc 48.7% → 44.0%
+  - occupied entity acc 34.1% → 40.2%
+- It's equally worse on *training* episodes (terrain 84.7% → 76.5%), so this is not overfitting.
+- Validation loss: terrain went **up** (0.021 → 0.029; on changed cells 0.35 → 0.62) while entity went **down 3×** (0.022 → 0.006). Training traded terrain away to improve entities.
+- **Likely cause: a loss-weighting bug.** The facing and level losses are averaged over dino cells only (roughly 1 in 1,000 cells), but terrain is averaged over every cell. So each dino cell counts about 1,000× more than a terrain cell. With gradient clipping, terrain's share of each update shrinks to almost nothing. The first s3 run had the same problem.
+- Fix: average facing and level over all cells, like the rest of the loss.
+- Note: 3 epochs was chosen for speed, not tested. Revisit once the loss is fixed.
