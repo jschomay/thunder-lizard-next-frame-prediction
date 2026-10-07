@@ -23,7 +23,7 @@ import torch
 
 from tlfp.baselines import predict as rule_predict
 from tlfp.data import find_episodes, split_by_episode, KEYS
-from tlfp.model import CNN
+from tlfp.model import build_model
 
 OUT = Path(".whiteboard/frame-prediction/rollouts.json")  # overridden by --out
 B36 = "0123456789abcdefghijklmnopqrstuvwxyz!@#$%^"
@@ -70,7 +70,7 @@ def main():
     ck = torch.load(args.checkpoint, map_location="cpu")
     c = ck["config"]
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = CNN(c["k"], c["width"], c["depth"], copy_prior=c.get("copy_prior", False)).to(device).eval()
+    model = build_model(c).to(device).eval()
     model.load_state_dict(ck["state"])
     gen = torch.Generator().manual_seed(0)
 

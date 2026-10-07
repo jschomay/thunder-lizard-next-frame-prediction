@@ -323,3 +323,9 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 ## 2026-10-07 — Stage 3 data
 - With 5 dinos, a dino was on screen in only 18% of ticks and moved in 12% (your own games: 51% moving). Raised stage 3 to **25 dinos**: now 52% on screen and 38% moving.
 - More dinos means more early deaths (only 64 of 200 games reached 500 ticks), so I generated two batches (seeds 0 and 1000): `data/stage3-100k` + `data/stage3-100k-b` = 400 games, **101,585 ticks**.
+
+## 2026-10-07 — H11 split heads + U-Net branch (code)
+- `--split-entity` (H11): three per-cell questions: what's here (4), facing (4), level (5). Facing and level are only scored on cells that hold a dino. The answers recombine into the usual 42 entity scores, so metrics and rollouts are unchanged. Checked that all 42 ids round-trip.
+- `--unet`: a shrink-and-grow branch (45→23→12→back) added onto the full-size features, with its last layer zero-initialized. **Verified:** with stage-2 weights loaded, its output is identical to `s2-warm-k4`.
+- `--init` now copies only the weights that match; new parts start fresh.
+- Speed (CPU, 1 frame): CNN 3.3 ms → U-Net+split 4.7 ms (about 1.4×, well inside the 10× budget). Parameters: 0.30M → 0.57M.

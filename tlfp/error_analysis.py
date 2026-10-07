@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from tlfp.data import TERRAIN, find_episodes, split_by_episode
-from tlfp.model import CNN
+from tlfp.model import build_model
 from tlfp.train import Frames
 
 DIRS = {1: (-1, 0), 2: (0, 1), 3: (1, 0), 4: (0, -1)}
@@ -27,7 +27,7 @@ def main(path: str):
     ck = torch.load(path, map_location="cpu")
     c = ck["config"]
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = CNN(c["k"], c["width"], c["depth"], copy_prior=c.get("copy_prior", False)).to(device)
+    model = build_model(c).to(device)
     model.load_state_dict(ck["state"])
     model.eval()
     _, val = split_by_episode(find_episodes(*c["data"]), 0.1, seed=0)

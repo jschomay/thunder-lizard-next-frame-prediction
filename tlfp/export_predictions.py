@@ -12,7 +12,7 @@ import torch
 
 from tlfp.baselines import predict as baseline_predict
 from tlfp.data import KEYS, find_episodes, split_by_episode
-from tlfp.model import CNN
+from tlfp.model import build_model
 from tlfp.train import Frames
 
 OUT = Path(".whiteboard/frame-prediction/predictions.json")
@@ -25,7 +25,7 @@ def main(path: str, n_episodes: int = 2, max_ticks: int = 200):
     ck = torch.load(path, map_location="cpu")
     cfg = ck["config"]
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = CNN(cfg["k"], cfg["width"], cfg["depth"], copy_prior=cfg.get("copy_prior", False)).to(device)
+    model = build_model(cfg).to(device)
     model.load_state_dict(ck["state"])
     model.eval()
     _, val_eps = split_by_episode(find_episodes(*cfg["data"]), 0.1, seed=0)
