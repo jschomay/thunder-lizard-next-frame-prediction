@@ -73,6 +73,11 @@ def fates_step(model, history, key, device, gen, draw):
     terrain[m] = draw(t_logits)[m]
     sy, sx = find_scroll(last[0], terrain)
     fate = f_logits.argmax(1)[0].cpu().numpy()
+    # dinos: draw the fate from its probabilities (dino moves are partly random in the game, and
+    # argmax nearly always says "stay"); the player keeps the most likely fate
+    fate_draw = torch.multinomial(f_logits.softmax(1)[0].permute(1, 2, 0).reshape(-1, 7).cpu(), 1,
+                                  generator=gen).reshape(45, 45).numpy()
+    fate = np.where((last[1] >= 21) & (last[1] <= 40), fate_draw, fate)
     ent = np.zeros((45, 45), np.uint8)
     for y, x in zip(*np.nonzero(last[1])):
         e, f = int(last[1][y, x]), int(fate[y, x])
@@ -93,8 +98,13 @@ def fates_step(model, history, key, device, gen, draw):
             if not (0 <= ty < 45 and 0 <= tx < 45) or ent[ty, tx]:
                 continue
         ent[ty, tx] = e
-    ring = np.ones((45, 45), bool); ring[2:-2, 2:-2] = False
-    new = draw(e_logits)
+    ring = np.ones((45, 45), bool); ring[1:-1, 1:-1] = False  # outermost row/column only
+    # training weighted dino cells by dino_weight, which multiplies the model's odds of "dino" by
+    # that factor; undo it before rolling dice, or the edge fills up with dinos
+    lp = e_logits.log_softmax(1)[0].cpu()
+    w = getattr(model, "dino_weight", 1.0)
+    lp[21:41] -= np.log(w)
+    new = torch.multinomial(lp.softmax(0).permute(1, 2, 0).reshape(-1, lp.shape[0]), 1, generator=gen).reshape(45, 45).numpy()
     spawn = ring & (ent == 0) & (kind(new) == 2)
     ent[spawn] = new[spawn]
     return np.stack([terrain, ent]).astype(np.uint8)
@@ -116,17 +126,20 @@ def main():
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     model = build_model(c).to(device).eval()
     model.load_state_dict(ck["state"])
+    model.dino_weight = c.get("dino_weight", 1.0)
     gen = torch.Generator().manual_seed(0)
 
     _, val = split_by_episode(find_episodes(*c["data"]), 0.1, seed=0)
     if args.data:
         val = find_episodes(args.data)
     out = {"run": c.get("name"), "episodes": []}
-    for ep in val[:args.episodes]:
+    for ep in [e for e in val if len(e.actions) > 60][:args.episodes]:
         obs, acts = np.asarray(ep.obs), np.asarray(ep.actions)
         s = args.start
         if s < 0:  # pick the moment with the most lava frontier in view
             s = max(range(model.k, len(acts) - args.ticks), key=lambda t: next_to_lava(obs[t][0]).sum(), default=model.k)
+        if len(acts) - s < 20:  # the game ended too soon after the start
+            continue
         n = min(args.ticks, len(acts) - s)
         seed_frames = [obs[s - i] for i in range(model.k - 1, -1, -1)]  # same real starting history for all
         names = ["argmax", "hybrid", "sample"] + (["fates"] if model.fates else []) + ([] if args.no_rule else ["rule"])

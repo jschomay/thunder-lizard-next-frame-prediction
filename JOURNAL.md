@@ -419,3 +419,31 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - **Checkpoint picking is not solved.** The dw20 run only kept its epoch-1 version (the "-last" saving was added after it started). Before the next run: pick the best checkpoint by a combined terrain + dino score, and confirm with rollouts.
 - **H11:** the player never vanishes under argmax (4 games). Caveats: dw20 sometimes shows 2–3 players, and sampling multiplies everything.
 - Next: U-Net + split + dino weight 20, directly comparable to s3-cnn-split-dw20.
+
+## 2026-10-07 — H13: per-entity fates (s3-cnn-fates)
+- **Labels** (`tlfp/moves.py`): match each entity across ticks after removing the scroll (found from terrain). 99% of dinos get a clear label: stay 59%, moved one cell 40%, die/gone <1%. No dinos spawn during play (checked the game code); 100 of 121 unmatched arrivals were at the screen edge.
+- **Model:** a 7-way fate head (stay/up/right/down/left/die/gone) on the CNN, read at cells that hold an entity. Warm start from dw20, 3 epochs, 16 min.
+- **One-step fate accuracy** (validation):
+  - player: 90%; when it moved, right 82% of the time
+  - dino: 63%; when it moved, right **27%** of the time (per-cell output: 15%)
+  - but it predicts a move for only 20% of dinos vs 40% real, so argmax makes dinos too still
+- **Rollout mode `fates`:** terrain as in hybrid. Entities are moved by their fate: argmax for the player, a random draw for dinos (in the game dino moves are partly random). New dinos are drawn only in the outermost ring, with the dino odds divided by the training dino weight.
+  - Without that odds correction the edge kept filling with dinos (an average of 83 on screen); a 2-cell ring was still too many (5.9).
+- **Rollouts** (8 validation games × 150 ticks):
+
+| | real | argmax (this model) | fates |
+|---|---|---|---|
+| players per frame | 1.00 | 4.24 (max 53) | **1.00** |
+| dinos per frame | 1.47 (max 4) | 8.67 (max 182) | **2.67 (max 12)** |
+| average gap in dino count vs real | 0 | 8.0 | **2.0** |
+| ticks where dinos changed | 82% | 73% | 58% |
+
+- **H13 partly supported.** No more duplication or vanishing from per-cell decisions. The remaining drift comes from the edge spawns: counts creep up in some games (to 10–12 by tick 150) and drop to 0 in one.
+- This model's own per-cell argmax got much worse (max 53 players): training the fate head changed the shared body. Not investigated.
+
+### What the net decides vs what our code decides
+| Net | Code |
+|---|---|
+| scroll (via terrain), lava spread/burnout, each entity's fate, facing/level, edge-dino odds | the output is game state drawn by a fixed renderer; lava cells roll dice; entities move one cell to their target, with collisions; dinos only appear in the outer ring; the player stays centred; odds corrected for the dino weight |
+
+The net makes the game-logic decisions; the code applies bookkeeping. "Pure" world models (GameNGen, DIAMOND, Genie) learn all of it from pixels, at far greater data and compute.
