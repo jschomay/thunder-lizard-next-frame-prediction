@@ -383,3 +383,30 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - **Dinos are barely learned.** The model erases about 80% of real dinos. The stage-2 model learned that dino classes never appear, and with correct weighting dinos are only ~0.1% of the loss, so the gradient to unlearn that is tiny.
 - Next run: `--dino-weight 20` (cells with a dino now or next count 20×) → s3-cnn-split-dw20.
 - Process note: the monitor delivered all the eval lines in one batch at the end, so the live check-ins didn't actually happen.
+
+## 2026-10-07 — s3-cnn-split-dw20 (dino cells weighted 20×, 18.5 min)
+- Dynamic accuracy stayed at 70.5–72% the whole run. The best checkpoint was saved at epoch 1 (step 1472, 71.9%).
+- Compared with v3:
+
+| | v3 | dw20 |
+|---|---|---|
+| dynamic | 73.5% | 71.9% |
+| terrain changed-cell acc | 83.3% | 83.3% |
+| frames with no player (one-step) | 59 | **26** |
+| player right when it moved | 16.2% | **35.0%** |
+| real dinos predicted as a dino | 18.9% | **40.7%** |
+| dino right when it moved | 1.1% | **14.7%** |
+| predicted / real dino cells | 0.36 | 1.07 |
+
+- Terrain is unchanged and dinos are much better. Dynamic accuracy is lower only because wrong dino guesses now count against it. That makes **dynamic accuracy a poor way to pick the best checkpoint at stage 3**: it favors models that ignore dinos. train.py now also saves `<name>-last.pt`.
+- **Rollouts** (4 validation games × 150 ticks, the model fed its own output; average per frame):
+
+| | real | v3 argmax | dw20 argmax | dw20 hybrid | dw20 sampled |
+|---|---|---|---|---|---|
+| players | 0.99 | 1.00 | 1.13 (max 3) | 1.01 | 6.7 (max 29) |
+| frames with no player | 0.5% | **0%** | **0%** | 0% | 1.3% |
+| dinos | 1.49 | 0.04 (vanish) | 4.8 (multiply) | 1.35 | 37 |
+
+- **H11 is supported for argmax:** the player never vanished in any rollout (it used to vanish in 4 of 6). Sampling still multiplies entities.
+- With v3, dinos vanish in rollouts; with dw20 they multiply under argmax. Hybrid happens to land close to the real count; that's a coincidence of the mode, not a fix.
+- Next: pick checkpoints by an entity-aware metric; then the U-Net + split + dino weight run.
