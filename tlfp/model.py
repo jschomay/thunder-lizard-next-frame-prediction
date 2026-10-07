@@ -41,6 +41,16 @@ def combine(kind: torch.Tensor, dir_: torch.Tensor, level: torch.Tensor) -> torc
     return torch.cat([k[:, :1], k[:, 1:2] + dl, k[:, 2:3] + dl, k[:, 3:4]], 1)
 
 
+def group_entity(e: torch.Tensor):
+    """42 scores -> (kind 4, dir 4, level 5) scores. Each group's score is the log of the summed
+    probability of its members (logsumexp), e.g. "player" = all 20 player classes together."""
+    B, _, H, W = e.shape
+    dino = e[:, 1:41].reshape(B, 2, 5, 4, H, W)       # [player|npc, level, dir]
+    kind = torch.stack([e[:, 0], dino[:, 0].flatten(1, 2).logsumexp(1),
+                        dino[:, 1].flatten(1, 2).logsumexp(1), e[:, 41]], 1)
+    return kind, dino.logsumexp((1, 2)), dino.logsumexp((1, 3))
+
+
 def build_model(c: dict) -> "CNN":
     return CNN(c["k"], c["width"], c["depth"], copy_prior=c.get("copy_prior", False),
                split_entity=c.get("split_entity", False), unet=c.get("unet", False))
@@ -75,11 +85,9 @@ class CNN(nn.Module):
         # 1x1 convs: per-cell readout of the features into class scores
         self.terrain_head = nn.Conv2d(width, N_TERRAIN, 1)
         self.split_entity = split_entity
-        if split_entity:
-            self.kind_head, self.dir_head = nn.Conv2d(width, N_KIND, 1), nn.Conv2d(width, N_DIR, 1)
-            self.level_head = nn.Conv2d(width, N_LEVEL, 1)
-        else:
-            self.entity_head = nn.Conv2d(width, N_ENTITY, 1)
+        # split mode reuses the same 42 scores, but groups them into the three questions (see
+        # group_entity), so a warm start from a flat-head model begins with the same predictions
+        self.entity_head = nn.Conv2d(width, N_ENTITY, 1)
         self.unet = unet
         if unet:  # 45 -> 23 -> 12 and back; each 3x3 at 12x12 sees ~1/4 of the screen
             self.down = nn.Sequential(
@@ -109,17 +117,10 @@ class CNN(nn.Module):
         t = self.terrain_head(h)
         if self.copy_prior:
             t = t + self.copy_strength[0] * oh(last[:, 0], N_TERRAIN)
-        if not self.split_entity:
-            e = self.entity_head(h)
-            if self.copy_prior:
-                e = e + self.copy_strength[1] * oh(last[:, 1], N_ENTITY)
-            return t, e
-        kind, dir_, level = self.kind_head(h), self.dir_head(h), self.level_head(h)
-        if self.copy_prior:  # same "keep what was here" bonus, per question
-            k0, d0, l0 = split_ids(last[:, 1])
-            s = self.copy_strength[1]
-            kind, dir_, level = kind + s * oh(k0, N_KIND), dir_ + s * oh(d0, N_DIR), level + s * oh(l0, N_LEVEL)
-        return t, (kind, dir_, level)
+        e = self.entity_head(h)
+        if self.copy_prior:
+            e = e + self.copy_strength[1] * oh(last[:, 1], N_ENTITY)
+        return t, (group_entity(e) if self.split_entity else e)
 
     @torch.no_grad()
     def predict(self, context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:

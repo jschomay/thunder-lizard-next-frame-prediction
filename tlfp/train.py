@@ -119,6 +119,11 @@ def main():
     ckpt.parent.mkdir(exist_ok=True)
     best = -1.0
     step, t0 = 0, time.time()
+    if args.init:  # score the starting point, so a warm start that gets worse is obvious
+        m = evaluate(model, val)
+        print(f"start        val dynamic {m['dynamic_acc']:.2%}  changed {m['changed_acc']:.2%}  exact {m['exact_frame_acc']:.2%}")
+        if run:
+            run.log({f"val/{k}": v for k, v in m.items()}, step=0)
     for epoch in range(args.epochs):
         order = torch.randperm(len(train), device=device)
         for b in range(steps_per_epoch):
