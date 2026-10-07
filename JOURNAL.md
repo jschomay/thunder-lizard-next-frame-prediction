@@ -410,3 +410,12 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - **H11 is supported for argmax:** the player never vanished in any rollout (it used to vanish in 4 of 6). Sampling still multiplies entities.
 - With v3, dinos vanish in rollouts; with dw20 they multiply under argmax. Hybrid happens to land close to the real count; that's a coincidence of the mode, not a fix.
 - Next: pick checkpoints by an entity-aware metric; then the U-Net + split + dino weight run.
+
+## 2026-10-07 — Checkpoint: where the CNN stands
+- The CNN (split output + dino weight 20) is a **solid stage-3 baseline**; we're done tuning it for now.
+  - Terrain changed-cell accuracy is 83.3% vs 85.5% for the stage-2 model: a small, stable cost.
+  - The player persists, and dinos are partly learned (41% placed, 15% of moves right).
+- **Success at stage 3:** judge by terrain accuracy, dino accuracy and rollouts, not by dynamic accuracy, which penalizes attempting dinos.
+- **Checkpoint picking is not solved.** The dw20 run only kept its epoch-1 version (the "-last" saving was added after it started). Before the next run: pick the best checkpoint by a combined terrain + dino score, and confirm with rollouts.
+- **H11:** the player never vanishes under argmax (4 games). Caveats: dw20 sometimes shows 2–3 players, and sampling multiplies everything.
+- Next: U-Net + split + dino weight 20, directly comparable to s3-cnn-split-dw20.
