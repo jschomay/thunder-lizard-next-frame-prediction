@@ -362,3 +362,4 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - **Likely cause: a loss-weighting bug.** The facing and level losses are averaged over dino cells only (roughly 1 in 1,000 cells), but terrain is averaged over every cell. So each dino cell counts about 1,000× more than a terrain cell. With gradient clipping, terrain's share of each update shrinks to almost nothing. The first s3 run had the same problem.
 - Fix: average facing and level over all cells, like the rest of the loss.
 - Note: 3 epochs was chosen for speed, not tested. Revisit once the loss is fixed.
+- **Fixed** both: facing/level losses are now averaged over all cells. The slowdown came from the logsumexp grouping on MPS (391 ms/step vs 150 ms for the flat head). Replaced it with one matrix multiply that gives the same result: split now takes 158 ms/step, U-Net+split 215 ms/step.

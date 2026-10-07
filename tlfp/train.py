@@ -137,12 +137,15 @@ def main():
             ce_t = F.cross_entropy(t_logits, target[:, 0], reduction="none")
             loss_t = (ce_t * w[:, 0]).sum() / w[:, 0].sum()
             if args.split_entity:
-                # "what's here" is scored everywhere; facing and level only where there is a dino
+                # "what's here" is scored everywhere; facing and level only where there is a dino.
+                # All three are averaged over every cell, like terrain: averaging facing/level over
+                # dino cells only made each dino cell count ~1000x a terrain cell (journal, v2)
                 kind, dir_, level = split_ids(target[:, 1])
                 dino = ((kind == 1) | (kind == 2)).float() * w[:, 1]
-                ce_e = (F.cross_entropy(e_out[0], kind, reduction="none") * w[:, 1]).sum() / w[:, 1].sum()
-                ce_e = ce_e + (F.cross_entropy(e_out[1], dir_, reduction="none") * dino).sum() / dino.sum().clamp(min=1)
-                loss_e = ce_e + (F.cross_entropy(e_out[2], level, reduction="none") * dino).sum() / dino.sum().clamp(min=1)
+                n = w[:, 1].sum()
+                loss_e = ((F.cross_entropy(e_out[0], kind, reduction="none") * w[:, 1]).sum()
+                          + (F.cross_entropy(e_out[1], dir_, reduction="none") * dino).sum()
+                          + (F.cross_entropy(e_out[2], level, reduction="none") * dino).sum()) / n
             else:
                 ce_e = F.cross_entropy(e_out, target[:, 1], reduction="none")
                 loss_e = (ce_e * w[:, 1]).sum() / w[:, 1].sum()

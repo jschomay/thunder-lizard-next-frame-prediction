@@ -41,14 +41,26 @@ def combine(kind: torch.Tensor, dir_: torch.Tensor, level: torch.Tensor) -> torc
     return torch.cat([k[:, :1], k[:, 1:2] + dl, k[:, 2:3] + dl, k[:, 3:4]], 1)
 
 
+def _group_matrix() -> torch.Tensor:
+    """[42, 13] 0/1 matrix: which kind (4), facing (4) and level (5) group each entity id belongs to"""
+    g = torch.zeros(N_ENTITY, N_KIND + N_DIR + N_LEVEL)
+    k, d, l = split_ids(torch.arange(N_ENTITY))
+    g[torch.arange(N_ENTITY), k] = 1
+    dino = (k == 1) | (k == 2)
+    g[torch.arange(N_ENTITY)[dino], N_KIND + d[dino]] = 1
+    g[torch.arange(N_ENTITY)[dino], N_KIND + N_DIR + l[dino]] = 1
+    return g
+
+
+GROUPS = _group_matrix()
+
+
 def group_entity(e: torch.Tensor):
-    """42 scores -> (kind 4, dir 4, level 5) scores. Each group's score is the log of the summed
-    probability of its members (logsumexp), e.g. "player" = all 20 player classes together."""
-    B, _, H, W = e.shape
-    dino = e[:, 1:41].reshape(B, 2, 5, 4, H, W)       # [player|npc, level, dir]
-    kind = torch.stack([e[:, 0], dino[:, 0].flatten(1, 2).logsumexp(1),
-                        dino[:, 1].flatten(1, 2).logsumexp(1), e[:, 41]], 1)
-    return kind, dino.logsumexp((1, 2)), dino.logsumexp((1, 3))
+    """42 scores -> (kind 4, dir 4, level 5) log-probabilities. Each group's probability is the sum
+    of its members', e.g. "player" = all 20 player classes together. One matrix multiply (fast on MPS)."""
+    p = torch.einsum("bchw,cg->bghw", e.softmax(1), GROUPS.to(e.device))
+    lp = p.clamp(min=1e-12).log()
+    return lp[:, :N_KIND], lp[:, N_KIND:N_KIND + N_DIR], lp[:, N_KIND + N_DIR:]
 
 
 def build_model(c: dict) -> "CNN":
