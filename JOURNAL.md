@@ -363,3 +363,23 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - Fix: average facing and level over all cells, like the rest of the loss.
 - Note: 3 epochs was chosen for speed, not tested. Revisit once the loss is fixed.
 - **Fixed** both: facing/level losses are now averaged over all cells. The slowdown came from the logsumexp grouping on MPS (391 ms/step vs 150 ms for the flat head). Replaced it with one matrix multiply that gives the same result: split now takes 158 ms/step, U-Net+split 215 ms/step.
+
+## 2026-10-07 — s3-cnn-split-v3 (both fixes, lr 3e-4, 17 min)
+- No collapse this time: start 73.1%, then 71.8–73.5% the whole run, ending at **73.4%**. Speed was normal.
+- Compared with s2-warm-k4 on the stage-3 validation set:
+
+| | s2-warm-k4 | v3 |
+|---|---|---|
+| dynamic | 73.1% | 73.5% |
+| terrain changed-cell acc | 85.5% | 83.3% |
+| exact frames | 13.6% | **21.5%** |
+| frames with no player predicted | 452 | **59** |
+| player exact | 89.1% | 94.6% |
+| player right when it moved | 23.3% | 16.2% |
+| dino predicted as a dino at all | 0% | 18.9% |
+| dino right when it moved | 0% | 1.1% |
+
+- **H11 (one-step):** the player almost never vanishes now. Rollouts are still needed.
+- **Dinos are barely learned.** The model erases about 80% of real dinos. The stage-2 model learned that dino classes never appear, and with correct weighting dinos are only ~0.1% of the loss, so the gradient to unlearn that is tiny.
+- Next run: `--dino-weight 20` (cells with a dino now or next count 20×) → s3-cnn-split-dw20.
+- Process note: the monitor delivered all the eval lines in one batch at the end, so the live check-ins didn't actually happen.
