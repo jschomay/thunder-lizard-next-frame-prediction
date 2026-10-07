@@ -345,3 +345,8 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 
 - H11 looks good for the player in one-step predictions (frames missing the player fell 7×). Rollouts are still needed to confirm it.
 - Dinos are partly learned. The model places many of them but often gets the exact class wrong (possibly facing or level) and rarely gets a moving dino right. Next: break dino errors down by kind / facing / level, then run rollouts, then the U-Net run (s3-unet-split, ~20 min going by this run's speed).
+
+### Correction: s3-cnn-split is *worse* than doing nothing new
+- On the same stage-3 validation games, the untouched **s2-warm-k4 scores 73.1%** dynamic accuracy (changed 84.2%, exact 13.6%), versus 68.4% for s3-cnn-split. Most of the score comes from terrain scrolling and lava, not from the few dino cells.
+- Cause (from the log): the warm start collapsed to 49% at 0.25 epoch, then slowly recovered to 68%. The split heads started random, and at lr 1e-3 their early gradients scrambled the pretrained body.
+- Fix for the next run: initialize the split heads from the old 42-way head, and/or lower the LR for warm starts (~3e-4). Also, always score the starting checkpoint on the new data as a baseline before training.
