@@ -180,6 +180,10 @@ def main():
                     print(f"  saved best -> {ckpt}")
                 if run:
                     run.log({f"val/{k}": v for k, v in m.items()} | {"val/best_dynamic_acc": best}, step=step)
+    # also keep the final weights: "best" is picked by dynamic accuracy, which counts every wrong
+    # dino guess, so it can prefer an earlier model that mostly ignores dinos
+    torch.save({"config": vars(args), "state": model.state_dict(), "step": step, "val": evaluate(model, val)},
+               ckpt.with_name(ckpt.stem + "-last.pt"))
     if run:
         run.finish()
 
