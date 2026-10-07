@@ -304,3 +304,18 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 - **Why it under-spreads despite over-predicting spread odds (measured):** the model gives **frontier lava** (which still has a burnable neighbor) a **4.4% chance per tick of burning out; the game's true rate is ~0%** (lava can only burn out when fully enclosed by lava/ocean). For enclosed lava it's well calibrated (14.2% vs 13.6%). Premature burnout kills the spreading front faster than the inflated spread odds can make up.
 - Temperature scaling wouldn't fix this. It's a structural error ("can't burn out while it has a burnable neighbor"), not overall over/under-confidence. Candidates: longer training, or more lava-frontier examples.
 - Your call: exact lava rates aren't required; plausible-looking is enough for the POC.
+
+## 2026-10-07 — Status checkpoint (before stage 3)
+**Where we are:** stage 1 (movement) and stage 2 (lava) done with a plain CNN.
+- Best stage-1 model: `checkpoints/s1-3ep-k4-cw5.pt` (k = 4, 71.6% dynamic, beats the hand rule's 68.6%).
+- Best stage-2 model: `checkpoints/s2-warm-k4.pt` (warm-started from stage 1, 73.7%).
+- Hypotheses: H3 🟢, H4 🟢, H5 🔴 (simple form), H9 🔴, H12 🟡; open: H1, H2, H6, H7, H8, H10, H11.
+- Known gaps: ocean blocking not learned; new-edge terrain smears (accepted for POC); continuity out of scope (measure later); lava spreads too slowly when sampled (accepted); **the player vanishes or duplicates in rollouts** (→ H11).
+
+**Stage 3 plan (dinos):**
+1. Generate ~100k ticks with 5 dinos (`record.ts --stage 3`). Dino AI was fixed earlier (fixed 45×45 viewport).
+2. Implement **H11**: split the entity head into *what's here* (empty/player/dino/skeleton) + *facing* + *level*, with facing/level loss only on occupied cells.
+3. Implement a **U-Net** whose full-size path equals the current CNN, plus a zero-initialized shrink/grow branch, so it can warm-start from `s2-warm-k4`.
+4. Runs (warn the user before each): CNN + H11 vs U-Net + H11, 3 epochs each, ~20–25 min each.
+5. Evaluate dinos: error analysis by entity type, rollouts (do dinos persist, move plausibly, chase or flee?), player survival in rollouts (H11).
+6. Keep the speed budget: per-frame compute within ~10× of today's ~1 GFLOP (2 ms CPU).
