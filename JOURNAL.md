@@ -468,3 +468,12 @@ The net makes the game-logic decisions; the code applies bookkeeping. "Pure" wor
   - The extra dinos come from the edge spawns (the per-cell dino odds), not from the moves, which can't duplicate. **Edge spawning is now the weak point.**
 - Speed: 4.5 ms/frame on CPU vs 3.3 for the CNN (1.4×, inside the budget).
 - **Conclusion:** the U-Net helps dino behaviour one step at a time (H13 + range). In rollouts, the edge-spawn rule hides the gain. Next: fix spawns (e.g. only on rows/columns newly revealed by a scroll, or a learned "arrivals" head trained on real arrivals), then compare rollouts without spawn noise.
+- **Spawn rule comparison** (fates rollouts, 8 games; real = 1.47 dinos per frame):
+
+| spawn rule | CNN dinos (max) / off-by | U-Net dinos (max) / off-by |
+|---|---|---|
+| outer ring every tick | 2.67 (12) / 1.96 | 3.95 (14) / 3.14 |
+| only the row/column a scroll just revealed | 1.20 (5) / 0.70 | **1.36 (5) / 0.71** |
+| no spawns | 1.06 (4) / 0.65 | 1.24 (4) / 0.64 |
+
+  "Revealed" is now the default (`--spawn`). Dinos can walk in from just outside the view without a scroll, so a few arrivals are missed; that's acceptable for now. Whiteboard rollouts were regenerated with it.

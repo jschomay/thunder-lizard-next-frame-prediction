@@ -29,6 +29,7 @@ from tlfp.data import find_episodes, split_by_episode, KEYS
 from tlfp.model import build_model, combine
 from tlfp.moves import MOVES, DIE, find_scroll, kind
 
+SPAWN = "revealed"  # where new dinos may appear in fates mode: ring | revealed | none (--spawn)
 OUT = Path(".whiteboard/frame-prediction/rollouts.json")  # overridden by --out
 B36 = "0123456789abcdefghijklmnopqrstuvwxyz!@#$%^"
 enc = lambda f: ["".join(map(str, f[0].ravel())), "".join(B36[v] for v in f[1].ravel())]
@@ -99,6 +100,12 @@ def fates_step(model, history, key, device, gen, draw):
                 continue
         ent[ty, tx] = e
     ring = np.ones((45, 45), bool); ring[1:-1, 1:-1] = False  # outermost row/column only
+    if SPAWN == "revealed":  # only the row/column the scroll just revealed
+        ring[:] = False
+        if sy: ring[-1 if sy > 0 else 0] = True
+        if sx: ring[:, -1 if sx > 0 else 0] = True
+    elif SPAWN == "none":
+        ring[:] = False
     # training weighted dino cells by dino_weight, which multiplies the model's odds of "dino" by
     # that factor; undo it before rolling dice, or the edge fills up with dinos
     lp = e_logits.log_softmax(1)[0].cpu()
@@ -118,8 +125,11 @@ def main():
     p.add_argument("--start", type=int, default=20, help="start tick (-1 = the tick with the most lava edge in view)")
     p.add_argument("--out", default=str(OUT))
     p.add_argument("--data", default=None, help="roll out these episodes instead of the run's validation split")
+    p.add_argument("--spawn", default="revealed", choices=["ring", "revealed", "none"])
     p.add_argument("--no-rule", action="store_true", help="skip the hand-written rule (it doesn't model lava)")
     args = p.parse_args()
+    global SPAWN
+    SPAWN = args.spawn
 
     ck = torch.load(args.checkpoint, map_location="cpu")
     c = ck["config"]
