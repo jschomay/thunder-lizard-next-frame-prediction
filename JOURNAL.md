@@ -447,3 +447,24 @@ W&B: fresh https://wandb.ai/jschomay-na/thunder-lizard-frame-prediction/runs/1ne
 | scroll (via terrain), lava spread/burnout, each entity's fate, facing/level, edge-dino odds | the output is game state drawn by a fixed renderer; lava cells roll dice; entities move one cell to their target, with collisions; dinos only appear in the outer ring; the player stays centred; odds corrected for the dino weight |
 
 The net makes the game-logic decisions; the code applies bookkeeping. "Pure" world models (GameNGen, DIAMOND, Genie) learn all of it from pixels, at far greater data and compute.
+
+## 2026-10-08 — U-Net + split + fates (s3-unet-fates)
+- Warm start from s3-cnn-fates; the U-Net branch starts at zero, so it began at exactly 71.92%. Training: 3 epochs, 19 min, ended at 72.4% dynamic. Evaluated the final checkpoint (`-last`).
+- Added a **chase/flee breakdown** to `tlfp/eval_fates.py`: for dino moves, by distance to the player, the share toward / away / stay. In the real game, dinos move toward the player about 2× as often as away, at every distance.
+- **One-step fates** (validation), CNN fates → U-Net fates:
+  - dino right when it moved: 26.6% → **39.3%**
+  - dino overall: 62.7% → 67.5%
+  - predicted to move: 20% → 26% (real 40%)
+  - player right when it moved: 82.0% → 85.2%
+
+| distance | real (toward / away / stay) | CNN | U-Net |
+|---|---|---|---|
+| near ≤6 | 27 / 13 / 60 | 15 / 6 / 79 | **23 / 7 / 70** |
+| mid 7–13 | 32 / 10 / 58 | 16 / 6 / 77 | **21 / 7 / 72** |
+| far >13 | 24 / 15 / 61 | 12 / 7 / 81 | **16 / 10 / 75** |
+
+- The U-Net predicts more chasing at every distance, and is closest to real for near dinos.
+- **Rollouts** (fates mode, same 8 games): dinos per frame 3.95 (max 14) vs CNN 2.67 (max 12) and 1.47 real. Dinos changed on 61% of ticks (CNN 58%, real 82%). Terrain drift is about the same (33.5% vs 35.1%; mostly unknowable new terrain).
+  - The extra dinos come from the edge spawns (the per-cell dino odds), not from the moves, which can't duplicate. **Edge spawning is now the weak point.**
+- Speed: 4.5 ms/frame on CPU vs 3.3 for the CNN (1.4×, inside the budget).
+- **Conclusion:** the U-Net helps dino behaviour one step at a time (H13 + range). In rollouts, the edge-spawn rule hides the gain. Next: fix spawns (e.g. only on rows/columns newly revealed by a scroll, or a learned "arrivals" head trained on real arrivals), then compare rollouts without spawn noise.
