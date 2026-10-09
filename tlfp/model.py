@@ -66,7 +66,22 @@ def group_entity(e: torch.Tensor):
 def build_model(c: dict) -> "CNN":
     return CNN(c["k"], c["width"], c["depth"], copy_prior=c.get("copy_prior", False),
                split_entity=c.get("split_entity", False), unet=c.get("unet", False),
-               fates=c.get("fates", False))
+               fates=c.get("fates", False), recurrent=c.get("recurrent", False))
+
+
+class ConvGRUCell(nn.Module):
+    """A GRU where every gate is a 3x3 convolution: each cell keeps a memory vector that the net
+    can update, keep or overwrite each tick, and neighbours can share memory."""
+
+    def __init__(self, width: int):
+        super().__init__()
+        self.gates = nn.Conv2d(2 * width, 2 * width, 3, padding=1)
+        self.cand = nn.Conv2d(2 * width, width, 3, padding=1)
+
+    def forward(self, x, h):
+        z, r = torch.sigmoid(self.gates(torch.cat([x, h], 1))).chunk(2, 1)
+        n = torch.tanh(self.cand(torch.cat([x, r * h], 1)))
+        return (1 - z) * h + z * n
 
 
 def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
@@ -82,7 +97,8 @@ def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
 
 class CNN(nn.Module):
     def __init__(self, k: int = 2, width: int = 64, depth: int = 6, copy_prior: bool = False,
-                 split_entity: bool = False, unet: bool = False, fates: bool = False):
+                 split_entity: bool = False, unet: bool = False, fates: bool = False,
+                 recurrent: bool = False):
         super().__init__()
         self.k = k
         # copy prior (H10): add a learned bonus to the class each cell had in the last frame,
@@ -107,6 +123,15 @@ class CNN(nn.Module):
         if fates:
             self.fate_head = nn.Conv2d(width, 7, 1)
             nn.init.zeros_(self.fate_head.weight); nn.init.zeros_(self.fate_head.bias)
+        # H15: a memory carried from tick to tick (ConvGRU) on top of the k-frame window. Its output
+        # layer starts at zero, so a warm-started model begins exactly as before. The memory lives
+        # on the model: set .carry = True and .state = None at the start of a sequence/rollout;
+        # with carry off (one-step evaluation) every call starts from an empty memory.
+        self.recurrent, self.carry, self.state = recurrent, False, None
+        if recurrent:
+            self.gru = ConvGRUCell(width)
+            self.mem_out = nn.Conv2d(width, width, 1)
+            nn.init.zeros_(self.mem_out.weight); nn.init.zeros_(self.mem_out.bias)
         self.unet = unet
         if unet:  # 45 -> 23 -> 12 and back; each 3x3 at 12x12 sees ~1/4 of the screen
             self.down = nn.Sequential(
@@ -128,6 +153,12 @@ class CNN(nn.Module):
     def forward_parts(self, context: torch.Tensor, keys: torch.Tensor):
         """terrain logits, and entity logits (42) or (kind, dir, level) when split"""
         h = self.body(encode_input(context, keys))
+        if self.recurrent:
+            prev = self.state if (self.carry and self.state is not None) else torch.zeros_like(h)
+            mem = self.gru(h, prev)
+            if self.carry:
+                self.state = mem
+            h = h + self.mem_out(mem)
         if self.unet:
             g = F.interpolate(self.down(h), size=h.shape[-2:], mode="nearest")
             h = h + self.up(torch.cat([h, g], 1))

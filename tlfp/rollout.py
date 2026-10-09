@@ -42,8 +42,23 @@ def next_to_lava(terrain: np.ndarray) -> np.ndarray:
     return adj & ~lava
 
 
+def model_step(model, history, key, device, sample, gen):
+    """one tick; a recurrent model (H15) keeps a separate memory per mode, cleared by reset_memory"""
+    if not getattr(model, "recurrent", False):
+        return _model_step(model, history, key, device, sample, gen)
+    states = model.__dict__.setdefault("mode_states", {})
+    model.carry, model.state = True, states.get(str(sample))
+    out = _model_step(model, history, key, device, sample, gen)
+    states[str(sample)], model.carry, model.state = model.state, False, None
+    return out
+
+
+def reset_memory(model):
+    model.__dict__["mode_states"] = {}
+
+
 @torch.no_grad()
-def model_step(model, history: list[np.ndarray], key: int, device, sample, gen: torch.Generator):
+def _model_step(model, history: list[np.ndarray], key: int, device, sample, gen: torch.Generator):
     """sample: False = argmax, True = sample every cell, "hybrid" = sample only lava and its neighbors"""
     ctx = torch.from_numpy(np.stack(history[-model.k:]).astype(np.int64))[None].to(device)
     t_logits, e_logits = model(ctx, torch.tensor([key], device=device))
@@ -151,6 +166,7 @@ def main():
         if len(acts) - s < 20:  # the game ended too soon after the start
             continue
         n = min(args.ticks, len(acts) - s)
+        reset_memory(model)
         seed_frames = [obs[s - i] for i in range(model.k - 1, -1, -1)]  # same real starting history for all
         names = ["argmax", "hybrid", "sample"] + (["fates"] if model.fates else []) + ([] if args.no_rule else ["rule"])
         hist = {name: list(seed_frames) for name in names}

@@ -33,7 +33,7 @@ import torch
 from tlfp.data import find_episodes, split_by_episode
 from tlfp.model import build_model
 from tlfp.moves import MOVES, find_scroll, kind
-from tlfp.rollout import model_step
+from tlfp.rollout import model_step, reset_memory
 from tlfp.train import Frames
 
 VAL_DATA = ["data/stage3-100k", "data/stage3-100k-b"]
@@ -95,6 +95,7 @@ def rollouts(model, val, n_eps=8, ticks=150) -> dict:
     for ep in [e for e in val if len(e.actions) > 60][:n_eps]:
         obs, acts = np.asarray(ep.obs), np.asarray(ep.actions)
         s = 20
+        reset_memory(model)
         hist = [obs[s - i] for i in range(model.k - 1, -1, -1)]
         for t in range(s, min(s + ticks, len(acts))):
             nxt = model_step(model, hist, int(acts[t]), "cpu", "fates", gen)
