@@ -69,11 +69,29 @@ def fates_step(model, history, key, device, gen, draw):
     t_logits, e_parts, f_logits = model.forward_parts(ctx, torch.tensor([key], device=device))
     e_logits = combine(*e_parts) if model.split_entity else e_parts
     last = history[-1]
-    terrain = t_logits.argmax(1)[0].cpu().numpy().astype(np.uint8)
-    m = next_to_lava(last[0]) | (last[0] == 6)
-    terrain[m] = draw(t_logits)[m]
-    sy, sx = find_scroll(last[0], terrain)
     fate = f_logits.argmax(1)[0].cpu().numpy()
+    # H14: the scroll is the player's predicted move (the view follows the player). Terrain only
+    # changes through lava in the game, so shift what was visible; the net draws only the newly
+    # revealed row/column, plus dice for lava and its neighbours
+    # the player: dice for *whether* it moves (from standstill the net often says ~30%, and argmax
+    # would then never get going), the net's top choice for *which way*
+    sy, sx = 0, 0
+    pl = np.argwhere((last[1] >= 1) & (last[1] <= 20))
+    if len(pl):
+        py, px = pl[0]
+        pf = f_logits[0, :, py, px].softmax(0).cpu()
+        moved = torch.rand(1, generator=gen).item() < pf[1:5].sum().item()
+        fate[py, px] = 1 + int(pf[1:5].argmax()) if moved else (int(pf.argmax()) if pf.argmax() > 4 else 0)
+        if 1 <= fate[py, px] <= 4:
+            sy, sx = MOVES[fate[py, px]]
+    net_t = t_logits.argmax(1)[0].cpu().numpy().astype(np.uint8)
+    terrain = net_t.copy()
+    ys, xs = np.mgrid[0:45, 0:45]
+    oy, ox = ys + sy, xs + sx
+    inside = (oy >= 0) & (oy < 45) & (ox >= 0) & (ox < 45)
+    terrain[inside] = last[0][oy[inside], ox[inside]]
+    m = next_to_lava(terrain) | (terrain == 6)
+    terrain[m] = draw(t_logits)[m]
     # dinos: draw the fate from its probabilities (dino moves are partly random in the game, and
     # argmax nearly always says "stay"); the player keeps the most likely fate
     fate_draw = torch.multinomial(f_logits.softmax(1)[0].permute(1, 2, 0).reshape(-1, 7).cpu(), 1,

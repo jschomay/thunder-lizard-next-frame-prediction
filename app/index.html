@@ -57,7 +57,7 @@ footer b{color:#bbb}
 <footer>
   <b>Arrow keys</b> to move. You are the white ①. Eat dinos of your level or lower, avoid bigger ones and lava.<br>
   The net only starts from four frames of a real game. After that everything is its imagination: terrain that scrolls into view, lava spreading, where every dino goes, whether you get eaten. It will drift from the real game, and that's the point.
-  The net predicts every change; a little code applies them (it moves each dino by the net's predicted move, rolls dice for lava and dino moves, and only lets new dinos appear at the edge the view just revealed).
+  The net predicts every change; a little code applies them (it scrolls the view by the net's predicted player move and keeps terrain you've already seen, moves each dino by the net's predicted move, rolls dice for lava and dino moves, and only lets new dinos appear at the edge the view just revealed). The net draws the terrain that scrolls into view and every lava change..
 </footer>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js"></script>
 <script src="main.js"></script>
