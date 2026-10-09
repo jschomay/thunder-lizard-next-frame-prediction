@@ -90,7 +90,6 @@ const KEYMAP = { ArrowUp: 1, ArrowRight: 2, ArrowDown: 3, ArrowLeft: 4 };
 addEventListener("keydown", ev => {
   const k = KEYMAP[ev.key];
   if (k) { ev.preventDefault(); held = held.filter(x => x !== k); held.push(k); }
-  if (ev.key === " ") { ev.preventDefault(); togglePause(); }
 });
 addEventListener("keyup", ev => { const k = KEYMAP[ev.key]; if (k) held = held.filter(x => x !== k); });
 addEventListener("blur", () => { held = []; });
@@ -104,14 +103,8 @@ const currentKey = () => held.length ? held[held.length - 1] : 0;
 // ---------- controls ----------
 $("go").onclick = () => { $("overlay").hidden = true; start(); };
 $("restart").onclick = () => { reset(); $("overlay").hidden = true; start(); };
-$("pause").onclick = togglePause;
-function togglePause() {
-  if (!session || dead) return;
-  if (running) { stop(); $("pause").textContent = "resume"; }
-  else { $("overlay").hidden = true; start(); }
-}
 function start() {
-  stop(); running = true; $("pause").textContent = "pause";
+  stop(); running = true;
   timer = setInterval(() => { if (!busy) tick(); }, TICK_MS);
 }
 function stop() { running = false; clearInterval(timer); timer = null; }
@@ -264,8 +257,6 @@ function record(ms) {
   const fps = stats.ticks.length > 1 ? (stats.ticks.length - 1) / ((now - stats.ticks[0]) / 1000) : 0;
   const avg = stats.modelMs.reduce((a, b) => a + b, 0) / stats.modelMs.length;
   $("meter").innerHTML = `${fps.toFixed(1)} FPS <span style="color:#888">(game: ${(1000 / TICK_MS).toFixed(1)})</span><br>net ${avg.toFixed(1)} ms/frame (${BACKEND === "webgpu" ? "GPU" : "CPU"})`;
-  const p = hist[K - 1].e.find(v => v >= 1 && v <= 20);
-  $("status").textContent = `tick ${tickNo}` + (p ? ` · level ${(((p - 1) / 4) | 0) + 1}` : "");
 }
 
 function gameOver() {
