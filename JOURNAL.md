@@ -531,3 +531,25 @@ Overall: "it is magical". What breaks the illusion:
 - **Restart bug:** a tick still in flight when you pressed restart wrote its frame into the new game. Fixed with a generation counter: stale ticks are dropped. Tested by restarting mid-tick 5 times.
 - The subtitle is shortened, with a link to the original game (enegames.itch.io/thunder-lizard-eat-or-be-eaten).
 - Fixed: a page-wide `canvas` style gave the whiteboard's transparent layer a dark background, hiding the game under the overlay. `?wb=<server>` loads the markup overlay (dev only).
+
+## 2026-10-09 — Release, scorecard, coast data, H8 setup
+- **The app is released as is** (Jeff): random starts, dice for dinos, terrain temperature 0.2, U-Net fates model. `checkpoints/best-so-far.pt` = s3-unet-fates-last. Stage 4 skipped: dinos spawn at the revealed edge by the net's odds, so there's no global dino count to tune, and there are plenty.
+- **Scorecard** (`tlfp/scorecard.py`): one fixed report on the stage-3 validation games for any fates model; saves `scorecards/<name>.json`. best-so-far:
+
+| metric | best-so-far | real |
+|---|---|---|
+| terrain changed-cell acc | 83.3 | |
+| player move right | 85.2 | |
+| ocean block (stay when pushing into ocean) | **99.7** | |
+| dino move right | 39.3 | |
+| dinos predicted to move | 26.4% | ~40% |
+| near dinos toward/away/stay | 21/7/72 | 29/12/60 |
+| rollout static cells | 0.023% | 0.02% |
+| rollout biggest terrain type (worst frame) | **74%** | ~59% |
+| rollout dinos per frame | 1.37 | ~1.5 |
+| rollout scroll when key held | **28%** | 44% |
+| CPU ms/frame | 4.5 | |
+
+- **Coast scenario** (`--scenario coast`: start next to ocean; CoastBot pushes into it): 80 games, 15.6k ticks, 78% of key presses push into ocean. But the normal data already has 12% ocean pushes, and the one-step ocean block is 99.7%. **Ocean blocking isn't a data problem.** The coast data is kept but unused.
+- **H8 implemented** (`--corrupt P`): half the examples get damaged inputs at up to 3% of cells (speckle or smear on terrain in all frames; dinos dropped in the older frames only). No noise-level input, so the model and app stay compatible.
+- Running: **s3-unet-more** (control: 3 more epochs, no damage; also answers "does longer training help?") and **s3-unet-h8** (same + `--corrupt 0.5`). The targets are rollout max_share (smear) and scroll_when_key.
