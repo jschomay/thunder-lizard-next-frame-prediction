@@ -27,6 +27,7 @@ const ticks = Number(args.ticks ?? 500)
 const firstSeed = Number(args.seed ?? 1)
 const outDir = args.out ?? join(__dirname, "..", "data", `stage${stage}`)
 // --scenario lava-still: player starts a few cells from lava and never moves (clean lava-growth test, H12)
+// --scenario coast: player starts near ocean and often pushes into it (blocked moves were the top error)
 const scenario = args.scenario
 
 // "Sticky" random walker: holds a direction for a while, sometimes idles.
@@ -40,6 +41,42 @@ class StickyBot {
       this.left = ROT.RNG.getUniformInt(3, 20)
     }
     return this.key
+  }
+}
+
+// Like StickyBot, but most of the time it heads for the nearest ocean in view and keeps pushing
+// into it, so the data has plenty of "key held, player blocked" ticks
+class CoastBot extends StickyBot {
+  constructor(private game: HeadlessGame) { super() }
+  private key2: Key = "NONE"
+  private left2 = 0
+  act(): Key {
+    if (this.left2-- > 0) return this.key2
+    if (ROT.RNG.getPercentage() > 70) { this.left2 = 0; return super.act() }
+    const [terrain, entity] = this.game.observe()
+    const me = entity.findIndex(v => v >= 1 && v <= 20)
+    const py = Math.floor(me / VIEW), px = me % VIEW
+    let best: Key = "NONE", bd = 1e9
+    for (let i = 0; i < VIEW * VIEW; i++) if (terrain[i] === 0) {
+      const dy = Math.floor(i / VIEW) - py, dx = (i % VIEW) - px, d = Math.abs(dy) + Math.abs(dx)
+      if (d < bd) { bd = d; best = Math.abs(dy) > Math.abs(dx) ? (dy < 0 ? "UP" : "DOWN") : (dx < 0 ? "LEFT" : "RIGHT") }
+    }
+    this.key2 = best === "NONE" ? super.act() : best
+    this.left2 = ROT.RNG.getUniformInt(4, 15)
+    return this.key2
+  }
+}
+
+// move the player onto a land cell next to ocean
+function placeNearOcean(game: HeadlessGame) {
+  const l = game.level
+  const ocean = [...l.map.getTagged(Terrain.Ocean)].map(e => e.getXY())
+  for (const c of ROT.RNG.shuffle(ocean)) {
+    for (const [dx, dy] of [[2, 0], [-2, 0], [0, 2], [0, -2]]) {
+      const xy = new XY(c.x + dx, c.y + dy)
+      const t = l.map.at(xy)
+      if ((t instanceof Terrain.Grass || t instanceof Terrain.Dirt) && !l.dinos.at(xy)) { l.playerDino.moveTo(xy); return }
+    }
   }
 }
 
@@ -68,8 +105,9 @@ let totalTicks = 0
 for (let e = 0; e < episodes; e++) {
   const seed = firstSeed + e
   const game = new HeadlessGame({ seed, ...STAGES[stage] })
-  const bot = scenario === "lava-still" ? { act: (): Key => "NONE" } : new StickyBot()
+  const bot = scenario === "lava-still" ? { act: (): Key => "NONE" } : scenario === "coast" ? new CoastBot(game) : new StickyBot()
   if (scenario === "lava-still") placeNearLava(game, 12)
+  if (scenario === "coast") placeNearOcean(game)
   const frame = 2 * VIEW * VIEW
   const obs = new Uint8Array((ticks + 1) * frame)
   const actions = new Uint8Array(ticks)

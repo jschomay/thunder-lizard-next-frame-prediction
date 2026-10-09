@@ -66,6 +66,31 @@ class Frames:
         return context, keys, target
 
 
+def corrupt(context: torch.Tensor, p: float, max_rate: float = 0.03) -> torch.Tensor:
+    """H8: damage some examples' input frames (the target stays real), so the net learns to repair
+    small mistakes instead of building on them in rollouts. For a fraction p of examples, each at a
+    random rate up to max_rate:
+      terrain, all frames: speckle (a random class) or smear (copy a neighbour's class)
+      dinos, older frames only: dropped (the last frame stays clean; the fate labels refer to it)"""
+    B, k, _, H, W = context.shape
+    ctx = context.clone()
+    pick = torch.rand(B, device=ctx.device) < p
+    if not pick.any():
+        return ctx
+    rate = torch.rand(B, 1, 1, 1, device=ctx.device) * max_rate * pick[:, None, None, None]
+    t = ctx[:, :, 0]
+    hit = torch.rand(t.shape, device=ctx.device) < rate
+    smear = torch.rand(t.shape, device=ctx.device) < 0.5
+    shift = [(1, -1), (1, -2), (-1, -1), (-1, -2)][int(torch.randint(4, (1,)))]
+    neighbour = torch.roll(t, *shift)
+    speckle = torch.randint(0, 8, t.shape, device=ctx.device)
+    ctx[:, :, 0] = torch.where(hit & smear, neighbour, torch.where(hit, speckle, t))
+    e = ctx[:, :-1, 1]
+    drop = (e >= 21) & (e <= 40) & (torch.rand(e.shape, device=ctx.device) < rate * 10)
+    ctx[:, :-1, 1] = torch.where(drop, 0, e)
+    return ctx
+
+
 def evaluate(model, data: Frames, batch_size=256) -> dict[str, float]:
     model.eval()
     totals: dict[str, int] = {}
@@ -96,6 +121,7 @@ def main():
     p.add_argument("--clip", type=float, default=1.0, help="gradient norm clip (0 = off)")
     p.add_argument("--max-steps", type=int, default=0, help="stop early (smoke tests)")
     p.add_argument("--split-entity", action="store_true", help="what's-here / facing / level heads (H11)")
+    p.add_argument("--corrupt", type=float, default=0.0, help="share of examples with damaged input frames (H8)")
     p.add_argument("--fates", action="store_true", help="per-entity fate head (H13)")
     p.add_argument("--unet", action="store_true", help="add a zero-initialized shrink-and-grow branch")
     p.add_argument("--init", default=None, help="start from a checkpoint's weights (warm start, H4)")
@@ -145,11 +171,14 @@ def main():
         order = torch.randperm(len(train), device=device)
         for b in range(steps_per_epoch):
             context, keys, target, *fate = train.batch(order[b * args.batch:(b + 1) * args.batch])
+            if args.corrupt:
+                clean_last = context[:, -1]
+                context = corrupt(context, args.corrupt)
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             t_logits, e_out, *fate_logits = model.forward_parts(context, keys)
             # per-cell losses, with cells that change weighted up (H9)
-            changed = context[:, -1] != target
+            changed = (clean_last if args.corrupt else context[:, -1]) != target
             w = 1 + (args.changed_weight - 1) * changed.float()
             if args.dino_weight != 1:  # dinos are ~0.1% of cells; without this they barely move the loss
                 has = lambda e: (e >= 1) & (e <= 40)
