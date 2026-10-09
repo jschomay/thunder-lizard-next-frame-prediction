@@ -31,6 +31,7 @@ button.primary{background:var(--acc);color:#111;border-color:var(--acc);font-wei
 <header>
   <h1>Thunder Lizard, imagined by a neural net</h1>
   <p class="sub">There is no game engine running. Every tick, a small neural net predicts the next frame. <a href="https://enegames.itch.io/thunder-lizard-eat-or-be-eaten" target="_blank" rel="noopener">See the original game here</a>.</p>
+  <p class="sub">Early work in progress. Runs best in Chrome or Edge (uses WebGPU); other browsers fall back to a slower CPU path.</p>
 </header>
 <div id="wrap">
   <canvas id="screen" width="720" height="720"></canvas>
@@ -49,6 +50,6 @@ button.primary{background:var(--acc);color:#111;border-color:var(--acc);font-wei
   <button data-k="4">◀</button><button data-k="3">▼</button><button data-k="2">▶</button>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js"></script>
-<script src="main.js?v=10"></script>
+<script src="main.js?v=11"></script>
 </body>
 </html>
