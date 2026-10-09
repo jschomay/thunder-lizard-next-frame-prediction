@@ -560,3 +560,26 @@ Overall: "it is magical". What breaks the illusion:
 - Gotcha: Vercel CLI 63 fails on Node 26 (`fetch failed`); run it with Node 24 (`~/.nvm/versions/node/v24.18.0/bin/npx vercel ...`).
 - Checked live: the model loads, runs on WebGPU and plays.
 - Redeploy: `cd app && ~/.nvm/versions/node/v24.18.0/bin/npx vercel deploy --prod`.
+
+## 2026-10-09 — Longer training vs H8 (scorecards)
+Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–22 min each). Last checkpoints scored:
+
+| metric | best-so-far | **more** (control) | h8 (`--corrupt 0.5`) | real |
+|---|---|---|---|---|
+| terrain changed acc | 83.3 | 85.1 | **85.9** | |
+| player move right | 85.2 | 90.0 | **92.7** | |
+| ocean block | 99.7 | 99.8 | 99.7 | |
+| dino move right | 39.3 | **45.8** | 43.5 | |
+| dinos predicted to move | 26.4 | **29.6** | 27.8 | ~40 |
+| near dinos toward/away/stay | 21/7/72 | **23/8/68** | 22/8/70 | 29/12/60 |
+| rollout static % | 0.023 | 0.018 | 0.029 | 0.02 |
+| rollout biggest terrain type | 74 | 71 | 71 | ~59 |
+| rollout dinos per frame | 1.37 | **1.50** | 1.24 | ~1.5 |
+| rollout scroll when key held | 28 | **44** | 46 | 44 |
+| CPU ms | 4.5 | 5.3* | 5.1* | |
+
+*CPU timing taken while the other run trained; noisy.
+
+- **Longer training helps a lot,** especially rollout scrolling: 28% → 44%, matching the real game (Jeff's "sometimes doesn't move at all"). Dinos also got better (45.8% of moves right).
+- **H8 is inconclusive.** Small gains on terrain and player one-step, slightly worse dinos, and **no change to its target**: the biggest terrain type is still 71% vs ~59% real, and static is unchanged. Not adopted for now. The rollout metrics come from 8 games and are noisy.
+- Candidate new best: **s3-unet-more-last**, pending Jeff's play-test (exported to a local test copy of the app, not deployed).

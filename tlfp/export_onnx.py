@@ -24,7 +24,7 @@ from torch import nn
 from tlfp.data import find_episodes, split_by_episode
 from tlfp.model import build_model, combine, encode_input, group_entity
 
-APP = Path("app")
+APP = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("app")  # optional output dir
 
 
 class Exported(nn.Module):
