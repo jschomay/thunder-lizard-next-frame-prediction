@@ -553,3 +553,10 @@ Overall: "it is magical". What breaks the illusion:
 - **Coast scenario** (`--scenario coast`: start next to ocean; CoastBot pushes into it): 80 games, 15.6k ticks, 78% of key presses push into ocean. But the normal data already has 12% ocean pushes, and the one-step ocean block is 99.7%. **Ocean blocking isn't a data problem.** The coast data is kept but unused.
 - **H8 implemented** (`--corrupt P`): half the examples get damaged inputs at up to 3% of cells (speckle or smear on terrain in all frames; dinos dropped in the older frames only). No noise-level input, so the model and app stay compatible.
 - Running: **s3-unet-more** (control: 3 more epochs, no damage; also answers "does longer training help?") and **s3-unet-h8** (same + `--corrupt 0.5`). The targets are rollout max_share (smear) and scroll_when_key.
+
+## 2026-10-09 — Published (early WIP)
+- **Live at https://thunder-lizard-frame-prediction.vercel.app/** (Vercel project `thunder-lizard-frame-prediction`, deployed from `app/` with the CLI; there's no build step).
+- Added a "Runs best in Chrome or Edge (WebGPU)" WIP line. `app/.vercelignore` keeps the Vercel link files and `.env.local` (an OIDC token the CLI created) out of the upload; checked that `/.env.local` returns 404.
+- Gotcha: Vercel CLI 63 fails on Node 26 (`fetch failed`); run it with Node 24 (`~/.nvm/versions/node/v24.18.0/bin/npx vercel ...`).
+- Checked live: the model loads, runs on WebGPU and plays.
+- Redeploy: `cd app && ~/.nvm/versions/node/v24.18.0/bin/npx vercel deploy --prod`.
