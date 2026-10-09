@@ -488,3 +488,19 @@ The net makes the game-logic decisions; the code applies bookkeeping. "Pure" wor
   - Gotcha: Chrome slows timers in hidden tabs to 1 per second, so measure with the tab visible.
 - Run locally: `cd app && python3 -m http.server 8765`, then open http://localhost:8765/.
 - H8 reframed: preventing divergence from the real game is a non-goal; H8 is about degradation (smear, static, impossible states), judged by plausibility statistics and feel.
+
+## 2026-10-09 — First play-test findings (Jeff, playing app/)
+Overall: "it is magical". What breaks the illusion:
+1. **Lava works quite well.**
+2. **"Most likely" dino moves barely move.** Argmax nearly always picks "stay" (the net predicts a move for 26% of dinos vs 40% real). Dice mode (the default) draws moves from the probabilities.
+3. **Moving through uniform non-water terrain sometimes doesn't scroll at all.** Water scrolls well.
+4. **Dinos sometimes "pin" to the player** instead of scrolling with the world.
+5. **Smearing fills the screen with one terrain type**, so scrolling stops being visible.
+6. **Ocean boundaries scroll worse** than other terrain boundaries.
+7. **Glyphs pin to screen coordinates** instead of moving with the world (in the real game they're tied to world tiles).
+
+**Diagnosis:**
+- 3, 4 and 7 share one cause. The app (and `rollout.py`) work out the scroll by matching the net's new terrain to the last one. In textureless or smeared terrain every shift matches equally, so no scroll is detected, and dinos and glyphs don't shift. (Glyphs are already tied to world position, but that position only updates when a scroll is detected.)
+- 5 and 6: the net redraws all 2,025 terrain cells every tick; errors compound and uniform areas spread. Long smooth ocean edges give it the least to go on.
+
+**Plan (H14):** take the scroll from the player's predicted fate (85% right on moves); shift already-visible terrain by it; the net only draws the newly revealed row/column and lava changes. This trades more bookkeeping in code for no smear and consistent scrolling. The purer alternative (H8 noise training so the net itself stops smearing) stays open as a comparison.
