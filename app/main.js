@@ -32,8 +32,8 @@ let timer = null;
 const stats = { ticks: [], modelMs: [] };
 
 const $ = id => document.getElementById(id);
-let TEMP = 0;  // terrain sampling temperature (0 = argmax)
-$("temp").oninput = ev => { TEMP = +ev.target.value; $("tempv").textContent = TEMP.toFixed(2); };
+const TEMP = 0.2;  // terrain sampling temperature: a little variety without static (journal 2026-10-09)
+let seedIdx = -1;  // which real starting state; a different random one each game
 const canvas = $("screen"), g = canvas.getContext("2d");
 
 // ---------- loading ----------
@@ -42,7 +42,7 @@ const WB = new URLSearchParams(location.search).get("wb");
 if (WB) {
   const s = document.createElement("script");
   s.src = WB.replace(/\/$/, "") + "/whiteboard.js";
-  s.onload = () => { whiteboard.connect(); whiteboard.pageState = () => ({ tick: tickNo, start: $("seed").value, sampling: TEMP }); };
+  s.onload = () => { whiteboard.connect(); whiteboard.pageState = () => ({ tick: tickNo, start: seedIdx }); };
   document.head.appendChild(s);
 }
 (async function init() {
@@ -53,7 +53,6 @@ if (WB) {
       createSession(),
     ]);
     SEEDS = seeds.seeds; K = seeds.k; DINO_W = seeds.dino_weight; session = s;
-    $("seed").innerHTML = SEEDS.map((sd, i) => `<option value="${i}">${i + 1}: ${sd.episode} tick ${sd.tick}</option>`).join("");
     reset();
     $("otitle").textContent = "Ready";
     $("otext").textContent = "Arrow keys to move. The first four frames come from a real game; everything after that is the net's imagination.";
@@ -75,8 +74,12 @@ async function createSession() {
   return ort.InferenceSession.create("model.onnx", { executionProviders: ["wasm"] });
 }
 
+let gen = 0;  // bumped on every reset, so a tick still in flight from the last game is dropped
 function reset() {
-  const sd = SEEDS[+$("seed").value || 0];
+  gen++; busy = false;
+  let i; do { i = Math.floor(Math.random() * SEEDS.length); } while (SEEDS.length > 1 && i === seedIdx);
+  seedIdx = i;
+  const sd = SEEDS[seedIdx];
   hist = sd.frames.map(([t, e]) => ({ t: Uint8Array.from(t), e: Uint8Array.from(e) }));
   world = [0, 0]; dead = false; tickNo = 0;
   draw(hist[hist.length - 1]);
@@ -101,7 +104,6 @@ const currentKey = () => held.length ? held[held.length - 1] : 0;
 // ---------- controls ----------
 $("go").onclick = () => { $("overlay").hidden = true; start(); };
 $("restart").onclick = () => { reset(); $("overlay").hidden = true; start(); };
-$("seed").onchange = () => { reset(); $("overlay").hidden = true; start(); };
 $("pause").onclick = togglePause;
 function togglePause() {
   if (!session || dead) return;
@@ -117,9 +119,11 @@ function stop() { running = false; clearInterval(timer); timer = null; }
 // ---------- one tick ----------
 async function tick() {
   busy = true;
+  const myGen = gen;
   const key = currentKey();
   const t0 = performance.now();
   const out = await runModel(key);
+  if (myGen !== gen) return;  // restarted while the net was thinking
   const ms = performance.now() - t0;
   const t1 = performance.now();
   const next = applyPredictions(out);
@@ -188,19 +192,18 @@ function applyPredictions({ terrain, entity, fate }) {
   const t = new Uint8Array(CELLS);
   for (let i = 0; i < CELLS; i++)
     t[i] = (last.t[i] === LAVA || nextToLava(last.t, i)) ? sampleAt(terrain, NT, i)
-      : TEMP > 0 ? sampleAt(terrain, NT, i, null, TEMP) : argmaxAt(terrain, NT, i);
+      : sampleAt(terrain, NT, i, null, TEMP);
   const [sy, sx] = findScroll(last.t, t);
   world[0] += sy; world[1] += sx;
 
   // entities: each one is moved by its predicted fate, so none can duplicate or vanish by accident
   const e = new Uint8Array(CELLS);
-  const dice = $("mode").value === "dice";
   for (let i = 0; i < CELLS; i++) {
     let id = last.e[i];
     if (!id) continue;
     const y = (i / N) | 0, x = i % N;
     const isPlayer = id <= 20, isDino = id >= 21 && id <= 40;
-    const f = isDino && dice ? sampleAt(fate, NF, i) : argmaxAt(fate, NF, i);
+    const f = isDino ? sampleAt(fate, NF, i) : argmaxAt(fate, NF, i);  // dino moves are partly random in the game
     if (f === GONE) continue;
     let dy = 0, dx = 0;
     if (f === DIE || id === 41) { if (f === DIE) id = 41; }
@@ -268,7 +271,7 @@ function record(ms) {
 function gameOver() {
   stop(); dead = true;
   $("otitle").textContent = "You were eaten (in the net's imagination)";
-  $("otext").textContent = `Survived ${tickNo} ticks. Restart or pick another start.`;
+  $("otext").textContent = `Survived ${tickNo} ticks. Restart for a new start.`;
   $("obtns").hidden = true;
   $("overlay").hidden = false;
 }

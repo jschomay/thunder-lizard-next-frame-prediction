@@ -523,3 +523,11 @@ Overall: "it is magical". What breaks the illusion:
 | 1.5 | 52 | 1.1% |
 
 - So "a tiny bit of sampling" means about 0.5–1.0.
+
+## 2026-10-09 — App polish from Jeff's whiteboard markup
+- A random start (one of the 12 seeds, never the same twice in a row) on every load and restart; the start dropdown is gone.
+- Dino moves always use dice; the dropdown is gone.
+- Terrain sampling is fixed at temperature 0.2; the slider is gone.
+- **Restart bug:** a tick still in flight when you pressed restart wrote its frame into the new game. Fixed with a generation counter: stale ticks are dropped. Tested by restarting mid-tick 5 times.
+- The subtitle is shortened, with a link to the original game (enegames.itch.io/thunder-lizard-eat-or-be-eaten).
+- Fixed: a page-wide `canvas` style gave the whiteboard's transparent layer a dark background, hiding the game under the overlay. `?wb=<server>` loads the markup overlay (dev only).
