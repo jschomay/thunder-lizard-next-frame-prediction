@@ -583,3 +583,4 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 - **Longer training helps a lot,** especially rollout scrolling: 28% → 44%, matching the real game (Jeff's "sometimes doesn't move at all"). Dinos also got better (45.8% of moves right).
 - **H8 is inconclusive.** Small gains on terrain and player one-step, slightly worse dinos, and **no change to its target**: the biggest terrain type is still 71% vs ~59% real, and static is unchanged. Not adopted for now. The rollout metrics come from 8 games and are noisy.
 - Candidate new best: **s3-unet-more-last**, pending Jeff's play-test (exported to a local test copy of the app, not deployed).
+- **Adopted (Jeff play-tested: "good"):** s3-unet-more-last is the new `checkpoints/best-so-far.pt` (the previous one is kept as `best-prev-unet-fates.pt`), exported to `app/` and redeployed.
