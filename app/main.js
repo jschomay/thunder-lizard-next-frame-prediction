@@ -37,14 +37,6 @@ let seedIdx = -1;  // which real starting state; a different random one each gam
 const canvas = $("screen"), g = canvas.getContext("2d");
 
 // ---------- loading ----------
-// dev only: ?wb=<whiteboard server> loads the markup overlay (not part of the app itself)
-const WB = new URLSearchParams(location.search).get("wb");
-if (WB) {
-  const s = document.createElement("script");
-  s.src = WB.replace(/\/$/, "") + "/whiteboard.js";
-  s.onload = () => { whiteboard.connect(); whiteboard.pageState = () => ({ tick: tickNo, start: seedIdx }); };
-  document.head.appendChild(s);
-}
 (async function init() {
   try {
     ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
