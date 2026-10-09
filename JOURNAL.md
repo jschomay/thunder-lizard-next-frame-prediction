@@ -509,3 +509,17 @@ Overall: "it is magical". What breaks the illusion:
 - Jeff: "I want frame prediction, this is moving away too far to game engine." H14 (code shifts terrain, scroll from the player's fate, dice for whether the player moves) was built, measured, then **reverted** (`git revert`). Its numbers are kept above as a record of the trade-off.
 - **Principle going forward:** the net predicts the frame. Code is limited to encoding the input, decoding the output (argmax / sampling / temperature) and drawing. Fixes for smearing, scrolling and pinning should come from the model and its training, not from game logic in code.
 - Open question: H13 (fates: code moves entities, edge-only spawns) also puts game bookkeeping in code. To be decided.
+
+## 2026-10-09 — Terrain sampling slider in the app
+- Decision (Jeff): keep dino fates (unavoidable to stop dinos multiplying); otherwise leave the app as is (frame prediction; no H14).
+- Added a "sampling" slider, a terrain temperature from 0 to 1.5. 0 = argmax (lava still rolls dice); above 0, every terrain cell is drawn from softmax(logits / T).
+- The net is very confident about terrain (the copy prior). Cells per tick that differ from the top choice, and isolated "static" cells after 40 ticks of moving right:
+
+| T | differ from top choice per tick | static after 40 ticks |
+|---|---|---|
+| 0.5 | 2 | 0% |
+| 0.75 | 6 | 0% |
+| 1.0 | 12 | 0.05% |
+| 1.5 | 52 | 1.1% |
+
+- So "a tiny bit of sampling" means about 0.5–1.0.

@@ -32,6 +32,8 @@ let timer = null;
 const stats = { ticks: [], modelMs: [] };
 
 const $ = id => document.getElementById(id);
+let TEMP = 0;  // terrain sampling temperature (0 = argmax)
+$("temp").oninput = ev => { TEMP = +ev.target.value; $("tempv").textContent = TEMP.toFixed(2); };
 const canvas = $("screen"), g = canvas.getContext("2d");
 
 // ---------- loading ----------
@@ -144,9 +146,9 @@ async function runModel(key) {
 
 // scores laid out [class][cell]; helpers per cell
 function argmaxAt(a, C, i) { let b = 0, bv = -Infinity; for (let c = 0; c < C; c++) { const v = a[c * CELLS + i]; if (v > bv) { bv = v; b = c; } } return b; }
-function sampleAt(a, C, i, adjust) {
+function sampleAt(a, C, i, adjust, temp = 1) {
   let mx = -Infinity; const p = new Float64Array(C);
-  for (let c = 0; c < C; c++) { p[c] = a[c * CELLS + i] + (adjust ? adjust(c) : 0); if (p[c] > mx) mx = p[c]; }
+  for (let c = 0; c < C; c++) { p[c] = (a[c * CELLS + i] + (adjust ? adjust(c) : 0)) / temp; if (p[c] > mx) mx = p[c]; }
   let s = 0; for (let c = 0; c < C; c++) { p[c] = Math.exp(p[c] - mx); s += p[c]; }
   let r = Math.random() * s;
   for (let c = 0; c < C; c++) { r -= p[c]; if (r <= 0) return c; }
@@ -177,7 +179,8 @@ function applyPredictions({ terrain, entity, fate }) {
   // are per-cell dice rolls in the real game)
   const t = new Uint8Array(CELLS);
   for (let i = 0; i < CELLS; i++)
-    t[i] = (last.t[i] === LAVA || nextToLava(last.t, i)) ? sampleAt(terrain, NT, i) : argmaxAt(terrain, NT, i);
+    t[i] = (last.t[i] === LAVA || nextToLava(last.t, i)) ? sampleAt(terrain, NT, i)
+      : TEMP > 0 ? sampleAt(terrain, NT, i, null, TEMP) : argmaxAt(terrain, NT, i);
   const [sy, sx] = findScroll(last.t, t);
   world[0] += sy; world[1] += sx;
 
