@@ -504,17 +504,3 @@ Overall: "it is magical". What breaks the illusion:
 - 5 and 6: the net redraws all 2,025 terrain cells every tick; errors compound and uniform areas spread. Long smooth ocean edges give it the least to go on.
 
 **Plan (H14):** take the scroll from the player's predicted fate (85% right on moves); shift already-visible terrain by it; the net only draws the newly revealed row/column and lava changes. This trades more bookkeeping in code for no smear and consistent scrolling. The purer alternative (H8 noise training so the net itself stops smearing) stays open as a comparison.
-
-## 2026-10-09 — H14 implemented (app + `rollout.py` fates mode)
-- The scroll comes from the player's predicted fate. Already-visible terrain is shifted by it; the net draws only the newly revealed row/column, plus dice for lava and its neighbours. The terrain-matching scroll detector was removed from the app.
-- **New finding:** with the player's fate on argmax, the player barely moved (scrolled on 15% of key-held ticks vs 44% real). From a standstill the net gives "move" a constant ~31% chance (holding RIGHT for 60 ticks, identical every tick), so argmax never starts moving, and the frames stay identical. Fix: dice for *whether* the player moves, the net's top choice for *which way*.
-- **Rollouts** (8 games × 150 ticks, U-Net fates):
-
-| | real | hybrid (net redraws terrain) | fates + H14 |
-|---|---|---|---|
-| isolated "static" terrain cells | 0.02% | 1.05% | **0.00%** |
-| biggest terrain type, share of screen | 40% (max 59%) | 38% (max 66%) | 43% (max 63%) |
-| scrolled on ticks with a key held | 44% | — | **41%** |
-
-- In the app: 30 ticks holding RIGHT → 15 columns scrolled, then 30 ticks DOWN → 11 rows. Glyphs, dinos and terrain all move with the world.
-- **Net vs code:** the code now also shifts already-seen terrain and rolls dice for whether the player moves; the net still decides the move odds and direction, the revealed terrain and lava.

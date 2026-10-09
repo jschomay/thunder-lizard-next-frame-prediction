@@ -158,35 +158,28 @@ function nextToLava(t, i) {
   return (y > 0 && t[i - N] === LAVA) || (y < N - 1 && t[i + N] === LAVA) || (x > 0 && t[i - 1] === LAVA) || (x < N - 1 && t[i + 1] === LAVA);
 }
 
+// the view moved by (dy, dx) if new[y][x] ~= old[y+dy][x+dx]  (tlfp/moves.py find_scroll)
+function findScroll(a, b) {
+  let best = [0, 0], bestErr = Infinity;
+  for (const [dy, dx] of MOVES) {
+    let diff = 0, n = 0;
+    for (let y = Math.max(-dy, 0); y < N + Math.min(-dy, 0); y++)
+      for (let x = Math.max(-dx, 0); x < N + Math.min(-dx, 0); x++) { n++; if (b[y * N + x] !== a[(y + dy) * N + x + dx]) diff++; }
+    const err = diff / n;
+    if (err < bestErr - 1e-9) { bestErr = err; best = [dy, dx]; }
+  }
+  return best;
+}
+
 function applyPredictions({ terrain, entity, fate }) {
   const last = hist[K - 1];
-  // the scroll is the player's predicted move: the view follows the player (H14)
-  let sy = 0, sx = 0;
-  const pi = last.e.findIndex(v => v >= 1 && v <= 20);
-  let playerFate = 0;
-  if (pi >= 0) {
-    // dice for *whether* the player moves (from standstill the net often says ~30%, and the top
-    // choice would then never get going), the net's top choice for *which way*
-    const p = []; let mx = -Infinity;
-    for (let c = 0; c < NF; c++) { p[c] = fate[c * CELLS + pi]; mx = Math.max(mx, p[c]); }
-    let s = 0; for (let c = 0; c < NF; c++) { p[c] = Math.exp(p[c] - mx); s += p[c]; }
-    const pMove = (p[1] + p[2] + p[3] + p[4]) / s;
-    if (Math.random() < pMove) { playerFate = 1; for (let c = 2; c <= 4; c++) if (p[c] > p[playerFate]) playerFate = c; }
-    else playerFate = argmaxAt(fate, NF, pi) > 4 ? argmaxAt(fate, NF, pi) : 0;
-    if (playerFate >= 1 && playerFate <= 4) [sy, sx] = MOVES[playerFate];
-  }
-  world[0] += sy; world[1] += sx;
-
-  // terrain only changes through lava in the real game: shift what was already visible, let the net
-  // draw only the newly revealed row/column, and roll dice for lava and its neighbours
+  // terrain: most likely class, but lava and its neighbours roll dice (spreading and burning out
+  // are per-cell dice rolls in the real game)
   const t = new Uint8Array(CELLS);
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const oy = y + sy, ox = x + sx, i = y * N + x;
-    t[i] = (oy >= 0 && oy < N && ox >= 0 && ox < N) ? last.t[oy * N + ox] : argmaxAt(terrain, NT, i);
-  }
-  const shifted = t.slice();
   for (let i = 0; i < CELLS; i++)
-    if (shifted[i] === LAVA || nextToLava(shifted, i)) t[i] = sampleAt(terrain, NT, i);
+    t[i] = (last.t[i] === LAVA || nextToLava(last.t, i)) ? sampleAt(terrain, NT, i) : argmaxAt(terrain, NT, i);
+  const [sy, sx] = findScroll(last.t, t);
+  world[0] += sy; world[1] += sx;
 
   // entities: each one is moved by its predicted fate, so none can duplicate or vanish by accident
   const e = new Uint8Array(CELLS);
@@ -196,7 +189,7 @@ function applyPredictions({ terrain, entity, fate }) {
     if (!id) continue;
     const y = (i / N) | 0, x = i % N;
     const isPlayer = id <= 20, isDino = id >= 21 && id <= 40;
-    const f = isPlayer ? playerFate : isDino && dice ? sampleAt(fate, NF, i) : argmaxAt(fate, NF, i);
+    const f = isDino && dice ? sampleAt(fate, NF, i) : argmaxAt(fate, NF, i);
     if (f === GONE) continue;
     let dy = 0, dx = 0;
     if (f === DIE || id === 41) { if (f === DIE) id = 41; }
