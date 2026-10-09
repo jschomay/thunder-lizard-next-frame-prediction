@@ -504,3 +504,8 @@ Overall: "it is magical". What breaks the illusion:
 - 5 and 6: the net redraws all 2,025 terrain cells every tick; errors compound and uniform areas spread. Long smooth ocean edges give it the least to go on.
 
 **Plan (H14):** take the scroll from the player's predicted fate (85% right on moves); shift already-visible terrain by it; the net only draws the newly revealed row/column and lava changes. This trades more bookkeeping in code for no smear and consistent scrolling. The purer alternative (H8 noise training so the net itself stops smearing) stays open as a comparison.
+
+## 2026-10-09 — H14 reverted: direction check
+- Jeff: "I want frame prediction, this is moving away too far to game engine." H14 (code shifts terrain, scroll from the player's fate, dice for whether the player moves) was built, measured, then **reverted** (`git revert`). Its numbers are kept above as a record of the trade-off.
+- **Principle going forward:** the net predicts the frame. Code is limited to encoding the input, decoding the output (argmax / sampling / temperature) and drawing. Fixes for smearing, scrolling and pinning should come from the model and its training, not from game logic in code.
+- Open question: H13 (fates: code moves entities, edge-only spawns) also puts game bookkeeping in code. To be decided.
