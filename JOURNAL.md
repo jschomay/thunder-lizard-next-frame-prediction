@@ -615,3 +615,22 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 
 - **H10 🟢 supported:** it learns faster and gets far more whole frames exactly right. Without it, the net has to learn "copy every unchanged cell" before it gets anything fully right.
 - H15 (s3-unet-gru) is training now; see the whiteboard "Memory (H15)" page.
+
+## 2026-10-09 — H15 first run: s3-unet-gru (ConvGRU memory, 8-tick sequences)
+- Warm start from best-so-far; the memory output starts at zero, so the start is identical (74.72%). 3 epochs, 37 min (about 1.8× a normal run).
+
+| metric | best-so-far (s3-unet-more) | **s3-unet-gru** | real |
+|---|---|---|---|
+| terrain changed acc | 85.1 | 86.4 | |
+| player move right | 90.0 | 92.2 | |
+| dino move right | 45.8 | **49.6** | |
+| dinos predicted to move | 29.6 | 31.4 | ~40 |
+| near dinos toward/away/stay | 23/8/68 | 25/9/67 | 29/12/60 |
+| rollout static % | 0.018 | **0.007** | 0.02 |
+| rollout biggest terrain type | 71 | **64** | ~59 |
+| rollout dinos per frame | 1.50 | 1.38 | ~1.5 |
+| rollout scroll when key held | 44 | 45 | 44 |
+| CPU ms/frame | 5.3 | 7.2 | |
+
+- The first real movement on smearing (biggest terrain type 71 → 64, static down). Dinos are better too.
+- **Confound:** the GRU run also got 3 more epochs than best-so-far, and we know extra training helps. The one-step metrics run *without* memory (empty memory each call), so those gains are probably from the extra training. The rollout numbers use the memory. Running the control **s3-unet-more2** (the same 3 epochs, no memory) before drawing a conclusion.
