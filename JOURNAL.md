@@ -477,3 +477,14 @@ The net makes the game-logic decisions; the code applies bookkeeping. "Pure" wor
 | no spawns | 1.06 (4) / 0.65 | 1.24 (4) / 0.64 |
 
   "Revealed" is now the default (`--spawn`). Dinos can walk in from just outside the view without a scroll, so a few arrivals are missed; that's acceptable for now. Whiteboard rollouts were regenerated with it.
+
+## 2026-10-09 — Playable app (`app/`)
+- Standalone page, no game engine: `app/index.html` + `main.js` + `model.onnx` (s3-unet-fates-last, 2.3 MB) + `seeds.json` (12 starting states from held-out games, 4 real frames each). Built with `uv run python -m tlfp.export_onnx <ckpt>`, which checks the ONNX output matches PyTorch.
+- Each tick runs the same step as the `fates` rollout mode (hybrid lava, dino fates drawn at random, the player's fate is the top choice, new dinos only on the edge a scroll reveals) and draws it with the game's own glyphs and colours.
+- The game runs one tick every 70 ms (14.3 per second). It shows an FPS meter (ticks/s) and the net's time per frame.
+- **Speed:**
+  - WebAssembly CPU: 150–250 ms per frame (too slow).
+  - **WebGPU: about 15 ms for the net, 16 ms per full tick** (net + apply + draw), so up to ~60 ticks/s, about 4× headroom. It falls back to the CPU if WebGPU is missing.
+  - Gotcha: Chrome slows timers in hidden tabs to 1 per second, so measure with the tab visible.
+- Run locally: `cd app && python3 -m http.server 8765`, then open http://localhost:8765/.
+- H8 reframed: preventing divergence from the real game is a non-goal; H8 is about degradation (smear, static, impossible states), judged by plausibility statistics and feel.
