@@ -602,3 +602,16 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 ## 2026-10-09 — Hypotheses closed, H15 added
 - Closed (Jeff OK'd): H7 🟢 (informal), H8 🔴 in this form, H12 🟡 closed as partly supported, H13 🟢. Still open for the architecture chapter: H1, H2, H6, H10.
 - The LinkedIn WIP post is going viral (~30k impressions). A commenter: "Temporal consistency requires recurrence… ConvRNN, ConvGRU, ConvLSTM." Added as **H15**: a recurrent hidden state across ticks instead of a fixed 4-frame window. Plausible here because the game has hidden state the frames don't show (movement phase, dino timers and targets, terrain that scrolled away), which a recurrent state could carry. Doable as a body swap within the CNN family; slower training (backprop through time).
+
+## 2026-10-09 — H10 closed: the copy prior
+- A clean comparison: stage 1, k=4 CNN, 1 epoch **from scratch**, identical except `--copy-prior`.
+
+| epoch | 0.25 | 0.5 | 0.75 | 1.0 |
+|---|---|---|---|---|
+| dynamic, copy prior | 42.1% | 59.7% | 64.2% | **64.7%** |
+| dynamic, none | 33.3% | 56.6% | 60.7% | 62.6% |
+| exact frames, copy prior | 29.9% | 43.6% | 46.4% | **47.2%** |
+| exact frames, none | 0.0% | 1.2% | 6.7% | 10.4% |
+
+- **H10 🟢 supported:** it learns faster and gets far more whole frames exactly right. Without it, the net has to learn "copy every unchanged cell" before it gets anything fully right.
+- H15 (s3-unet-gru) is training now; see the whiteboard "Memory (H15)" page.
