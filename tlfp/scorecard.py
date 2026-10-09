@@ -88,7 +88,7 @@ def one_step(model, data, dev) -> dict:
 
 
 @torch.no_grad()
-def rollouts(model, val, n_eps=8, ticks=150) -> dict:
+def rollouts(model, val, n_eps=8, ticks=150) -> dict:  # n_eps: --eps
     gen = torch.Generator().manual_seed(0)
     torch.manual_seed(0)
     iso, share, dinos, sc = [], [], [], []
@@ -115,6 +115,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("checkpoint")
     p.add_argument("--name", default=None)
+    p.add_argument("--eps", type=int, default=8, help="rollout games (8 is quick but noisy)")
     args = p.parse_args()
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     ck = torch.load(args.checkpoint, map_location="cpu")
@@ -125,7 +126,7 @@ def main():
     _, val = split_by_episode(find_episodes(*VAL_DATA), 0.1, seed=0)
     out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True), dev)
     model = model.cpu()
-    out |= rollouts(model, val)
+    out |= rollouts(model, val, n_eps=args.eps)
     x, k = torch.zeros(1, model.k, 2, 45, 45, dtype=torch.long), torch.tensor([0])
     for _ in range(5):
         model.forward_parts(x, k)

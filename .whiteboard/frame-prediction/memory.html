@@ -103,7 +103,20 @@ input[type=range]{vertical-align:middle}
 </table>
 
 <h2 data-wb="sec-results">6. Results</h2>
-<div class="card" id="results" data-wb="results">Training is running. The scorecard comparison will go here.</div>
+<div class="card" id="results" data-wb="results">
+<p style="margin-top:0">Both runs start from the same best model and train 3 more passes on the same data; the only difference is the memory. Rollouts: 24 held-out games × 150 ticks, the model on its own.</p>
+<table>
+<tr><th></th><th>no memory (control)</th><th>with memory (H15)</th><th>real game</th></tr>
+<tr><td>biggest single terrain type on screen (smear)</td><td>68%</td><td><b>66%</b></td><td>~59%</td></tr>
+<tr><td>dinos per frame</td><td>1.25</td><td><b>1.43</b></td><td>~1.5</td></tr>
+<tr><td>view scrolls when a key is held</td><td>41%</td><td>39%</td><td>44%</td></tr>
+<tr><td>dino moves predicted right (one step)</td><td>48.9%</td><td>49.6%</td><td></td></tr>
+<tr><td>terrain right where it changed (one step*)</td><td><b>88.1%</b></td><td>86.4%</td><td></td></tr>
+<tr><td>CPU time per frame</td><td>5.0 ms</td><td>6.1 ms</td><td></td></tr>
+</table>
+<p class="sub" style="font-size:13px">*One-step scores give the memory model an empty memory, which it never had in training, so they slightly understate it.</p>
+<p><b>Verdict so far: a small edge, not a clear win.</b> Most of the improvement we first saw came from the extra training, not the memory. The memory still keeps dinos around a little better and smears a little less. It may matter more where we haven't tested yet: walking away and coming back (continuity), and training on sequences longer than 8 ticks (~0.6 s of game time).</p>
+</div>
 </main>
 <script>
 // ---- 1. window vs memory ----

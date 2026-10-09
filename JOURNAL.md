@@ -634,3 +634,20 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 
 - The first real movement on smearing (biggest terrain type 71 → 64, static down). Dinos are better too.
 - **Confound:** the GRU run also got 3 more epochs than best-so-far, and we know extra training helps. The one-step metrics run *without* memory (empty memory each call), so those gains are probably from the extra training. The rollout numbers use the memory. Running the control **s3-unet-more2** (the same 3 epochs, no memory) before drawing a conclusion.
+- **Control s3-unet-more2** (same 3 epochs, no memory) and both rescored on **24 rollout games** (8 was too noisy):
+
+| metric | more2 (control) | gru (H15) |
+|---|---|---|
+| terrain changed acc (one-step, GRU with empty memory) | **88.1** | 86.4 |
+| player move right | **93.2** | 92.2 |
+| dino move right | 48.9 | 49.6 |
+| near dinos toward/away/stay | 25/9/67 | 25/9/67 |
+| rollout static % (24 games) | 0.100 | 0.096 |
+| rollout biggest terrain type (24) | 68 | **66** |
+| rollout dinos per frame (24) | 1.25 | **1.43** (real ~1.5) |
+| rollout scroll when key held (24) | 41 | 39 |
+| CPU ms | 5.0 | 6.1 |
+
+- **H15 verdict for this form: 🟡 weak / inconclusive.** Most of the smear gain came from the extra training. The memory adds a small edge on smear (66 vs 68) and keeps the dino count closer to real (1.43 vs 1.25), at 1.2–1.8× compute, with app plumbing still to build. One-step numbers are slightly lower for the GRU, but they're measured with an empty memory, which it never saw in training, so that's not a fair test of it.
+- Not tested yet, and where memory should matter most: a **continuity test** (walk away, come back) and longer training sequences (8 ticks ≈ 0.6 s of game time).
+- Candidate new best: **s3-unet-more2** (simpler; best one-step numbers), pending Jeff's play-test.
