@@ -55,7 +55,7 @@ if (WB) {
     SEEDS = seeds.seeds; K = seeds.k; DINO_W = seeds.dino_weight; session = s;
     reset();
     $("otitle").textContent = "Ready";
-    $("otext").textContent = "Arrow keys to move. The first four frames come from a real game; everything after that is the net's imagination.";
+    $("otext").textContent = "You are the white ① in the middle. Arrow keys to move. The first four frames come from a real game; everything after that is the net's imagination.";
     $("obtns").hidden = false;
   } catch (err) {
     $("otitle").textContent = "Couldn't load the model";
