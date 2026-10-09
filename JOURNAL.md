@@ -598,3 +598,7 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 - **H8 is inconclusive.** Small gains on terrain and player one-step, slightly worse dinos, and **no change to its target**: the biggest terrain type is still 71% vs ~59% real, and static is unchanged. Not adopted for now. The rollout metrics come from 8 games and are noisy.
 - Candidate new best: **s3-unet-more-last**, pending Jeff's play-test (exported to a local test copy of the app, not deployed).
 - **Adopted (Jeff play-tested: "good"):** s3-unet-more-last is the new `checkpoints/best-so-far.pt` (the previous one is kept as `best-prev-unet-fates.pt`), exported to `app/` and redeployed.
+
+## 2026-10-09 — Hypotheses closed, H15 added
+- Closed (Jeff OK'd): H7 🟢 (informal), H8 🔴 in this form, H12 🟡 closed as partly supported, H13 🟢. Still open for the architecture chapter: H1, H2, H6, H10.
+- The LinkedIn WIP post is going viral (~30k impressions). A commenter: "Temporal consistency requires recurrence… ConvRNN, ConvGRU, ConvLSTM." Added as **H15**: a recurrent hidden state across ticks instead of a fixed 4-frame window. Plausible here because the game has hidden state the frames don't show (movement phase, dino timers and targets, terrain that scrolled away), which a recurrent state could carry. Doable as a body swap within the CNN family; slower training (backprop through time).
