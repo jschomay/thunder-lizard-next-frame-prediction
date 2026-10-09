@@ -1,0 +1,184 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Memory (H15)</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f;--plan:#a35a12;--code:#f1efe9;--mem:#7a3fd1;--err:#d4202a}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 80px}
+nav a{margin-right:14px;color:var(--acc)}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:30px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:10px 0}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.col{flex:1 1 300px;min-width:0}
+code{font-family:ui-monospace,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;font-size:13px}
+.btn{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--fg);background:var(--card);border-radius:4px;cursor:pointer}
+table{border-collapse:collapse;font-size:13.5px;width:100%}td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+svg text{font-family:system-ui,sans-serif}
+svg{max-width:100%;height:auto;display:block}
+.k{font-weight:700}
+input[type=range]{vertical-align:middle}
+</style></head>
+<body><main>
+<nav><a href="index.html">Plan</a><a href="how.html">How it works</a><a href="concepts.html">Model concepts</a><a href="inside.html">Inside the model</a><a href="memory.html"><b>Memory (H15)</b></a><a href="data.html">Data</a><a href="predictions.html">Predictions</a><a href="play.html">Play in the net</a><a href="precedents.html">Precedents</a></nav>
+<h1>Giving the net a memory (H15)</h1>
+<p class="sub">A LinkedIn commenter: <i>"Temporal consistency requires recurrence."</i> This page shows what that means, how it differs from what we have, and how it's trained.</p>
+
+<h2 data-wb="sec-window">1. A window vs. a memory</h2>
+<p>Today the net sees a <b>window</b> of the last 4 frames. Anything older is gone. A recurrent net also passes a <b>memory</b> to itself every tick: a stack of numbers it chooses what to write into and what to keep. Step through the ticks: a dino starts chasing at tick 2 (its target is invisible in the frames), and it matters at tick 9.</p>
+<div class="card" data-wb="window-vs-memory">
+  <div style="margin-bottom:6px"><button class="btn" onclick="wv(-1)">◀</button> <button class="btn" onclick="wv(1)">▶</button> tick <span class="k" id="wvt">2</span> <span class="sub" id="wvnote"></span></div>
+  <svg id="wvsvg" viewBox="0 0 960 250"></svg>
+</div>
+
+<h2 data-wb="sec-what">2. What the memory is</h2>
+<div class="row">
+<div class="col">
+<p>Every cell already has a vector of <b>64 numbers</b> (features) inside the net; see <a href="inside.html">Inside the model</a>. The memory is a second vector of 64 numbers per cell that <b>survives to the next tick</b>.</p>
+<p>A <b>ConvGRU</b> decides, for every number, how much to rewrite. Two "gates" (numbers between 0 and 1, computed by small 3×3 convolutions from the new features and the old memory):</p>
+<ul>
+<li><b>update gate z</b>: how much to replace. 0 = keep the old memory, 1 = overwrite with the new.</li>
+<li><b>reset gate r</b>: how much of the old memory to look at while writing the new.</li>
+</ul>
+<p><code>new memory = (1 − z) · old + z · candidate</code></p>
+<p>Because the gates are 3×3 convolutions, neighbouring cells can pass memory along, e.g. as a dino walks. (ConvLSTM is a sibling with an extra gate; ConvRNN is the simple version without gates, which forgets fast.)</p>
+</div>
+<div class="col card" data-wb="gru-toy">
+<b>Toy: one memory number</b>
+<div class="sub" style="font-size:13px">Grey bars: an event in the input (e.g. "a dino started chasing"). Purple: what the memory holds. Drag z.</div>
+<div style="margin:6px 0">update gate z <input type="range" id="z" min="0.02" max="1" step="0.01" value="0.15"> <span id="zv" class="k">0.15</span></div>
+<canvas id="toy" width="440" height="170" style="width:100%;border:1px solid var(--line);border-radius:4px"></canvas>
+<div class="sub" style="font-size:12.5px" id="toynote"></div>
+</div>
+</div>
+
+<h2 data-wb="sec-bptt">3. Training through time ("error through time")</h2>
+<p>With a window, each example is scored alone. With memory, we feed <b>8 ticks in a row</b> and score every one. If tick 8 is wrong because something wasn't remembered at tick 2, the error flows <b>backwards along the memory arrows</b> and adjusts what gets written at tick 2. This is <b>backpropagation through time</b>; cutting it at 8 ticks is "truncated". Click a tick's error to see where it sends blame.</p>
+<div class="card" data-wb="bptt">
+  <svg id="bptt" viewBox="0 0 960 230"></svg>
+  <div class="sub" style="font-size:13px" id="bpttnote">Click a red error circle.</div>
+</div>
+
+<h2 data-wb="sec-ours">4. Our version</h2>
+<div class="row">
+<div class="col">
+<svg viewBox="0 0 470 300" data-wb="our-model">
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#555"/></marker>
+  <marker id="am" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a3fd1"/></marker></defs>
+  <rect x="10" y="20" width="120" height="44" rx="6" fill="#eef4f0" stroke="#2f6f4f"/><text x="70" y="40" text-anchor="middle" font-size="13">last 4 frames</text><text x="70" y="56" text-anchor="middle" font-size="12" fill="#6b6a65">+ your key</text>
+  <rect x="170" y="20" width="110" height="44" rx="6" fill="#fff" stroke="#555"/><text x="225" y="47" text-anchor="middle" font-size="13">6 conv layers</text>
+  <line x1="130" y1="42" x2="168" y2="42" stroke="#555" marker-end="url(#a)"/>
+  <rect x="170" y="110" width="110" height="44" rx="6" fill="#f3edfb" stroke="#7a3fd1"/><text x="225" y="137" text-anchor="middle" font-size="13" fill="#7a3fd1">ConvGRU</text>
+  <line x1="225" y1="64" x2="225" y2="108" stroke="#555" marker-end="url(#a)"/>
+  <path d="M170,140 C110,140 110,200 170,200" fill="none" stroke="#7a3fd1" stroke-dasharray="4 3"/>
+  <text x="60" y="176" font-size="12" fill="#7a3fd1">memory from</text><text x="60" y="190" font-size="12" fill="#7a3fd1">last tick</text>
+  <rect x="170" y="180" width="110" height="34" rx="6" fill="#fff" stroke="#7a3fd1" stroke-dasharray="4 3"/><text x="225" y="201" text-anchor="middle" font-size="12" fill="#7a3fd1">memory (64/cell)</text>
+  <line x1="225" y1="180" x2="225" y2="156" stroke="#7a3fd1" marker-end="url(#am)"/>
+  <text x="300" y="128" font-size="12" fill="#7a3fd1">+ 1×1 layer that</text><text x="300" y="142" font-size="12" fill="#7a3fd1">starts at zero</text>
+  <rect x="330" y="20" width="120" height="44" rx="6" fill="#fff" stroke="#555"/><text x="390" y="40" text-anchor="middle" font-size="13">U-Net + heads</text><text x="390" y="56" text-anchor="middle" font-size="12" fill="#6b6a65">terrain, entity, fate</text>
+  <path d="M280,132 C310,132 300,60 328,50" fill="none" stroke="#7a3fd1" marker-end="url(#am)"/>
+  <line x1="280" y1="42" x2="328" y2="42" stroke="#555" marker-end="url(#a)"/>
+  <rect x="330" y="230" width="120" height="44" rx="6" fill="#fff" stroke="#a35a12"/><text x="390" y="257" text-anchor="middle" font-size="13">next frame</text>
+  <line x1="390" y1="64" x2="390" y2="228" stroke="#555" marker-end="url(#a)"/>
+</svg>
+</div>
+<div class="col">
+<ul>
+<li><b>Added on top of</b> the best model, not replacing it: it still sees 4 frames, plus the memory.</li>
+<li><b>Warm start:</b> the layer that feeds memory into the rest starts at zero, so the run begins <i>exactly</i> as the best model (checked) and learns to use memory from there. Same trick as the U-Net branch.</li>
+<li><b>Training:</b> 8-tick sequences, same frames per step as before. The memory starts empty at each sequence.</li>
+<li><b>Cost:</b> ~0.13M more weights. Each tick does a bit more work, and the app would have to carry the memory between ticks.</li>
+<li><b>Measured by</b> the scorecard: smear, static, dinos, scrolling, plus a planned "walk away and come back" continuity test. And how it feels to play.</li>
+</ul>
+</div>
+</div>
+
+<h2 data-wb="sec-families">5. Where this sits</h2>
+<table data-wb="families">
+<tr><th>Model</th><th>What it remembers</th><th>Status</th></tr>
+<tr><td>CNN / U-Net window (ours)</td><td>Exactly the last 4 frames</td><td>best so far, live in the app</td></tr>
+<tr><td><b>CNN + ConvGRU (H15)</b></td><td>4 frames + a learned memory, as long as it chooses to keep it</td><td>training now</td></tr>
+<tr><td>Transformer (H2)</td><td>Looks back over many past frames at once ("attention")</td><td>next chapter</td></tr>
+<tr><td>Diffusion (GameNGen-style)</td><td>A window of frames, generates each new frame by denoising</td><td>next chapter</td></tr>
+</table>
+
+<h2 data-wb="sec-results">6. Results</h2>
+<div class="card" id="results" data-wb="results">Training is running. The scorecard comparison will go here.</div>
+</main>
+<script>
+// ---- 1. window vs memory ----
+const N = 12, EVT = 2, USE = 9;
+let wt = 2;
+function wv(d) { wt = Math.max(0, Math.min(N - 1, wt + d)); drawWV(); }
+function drawWV() {
+  const s = document.getElementById("wvsvg"), W = 960, x0 = 150, dx = (W - x0 - 20) / N;
+  let h = `<text x="10" y="58" font-size="14" font-weight="700">Window (now)</text><text x="10" y="76" font-size="12" fill="#6b6a65">last 4 frames</text>
+           <text x="10" y="168" font-size="14" font-weight="700" fill="#7a3fd1">Memory (H15)</text><text x="10" y="186" font-size="12" fill="#6b6a65">4 frames + memory</text>`;
+  for (let i = 0; i < N; i++) {
+    const x = x0 + i * dx, inWin = i <= wt && i > wt - 4, now = i === wt;
+    const fill = i === EVT ? "#ffe9b0" : "#fff";
+    h += `<rect x="${x}" y="40" width="${dx - 8}" height="40" rx="4" fill="${fill}" stroke="${inWin ? "#2f6f4f" : "#ddd"}" stroke-width="${inWin ? 2.5 : 1}" opacity="${i <= wt ? 1 : .35}"/>`;
+    h += `<rect x="${x}" y="150" width="${dx - 8}" height="40" rx="4" fill="${fill}" stroke="${now || inWin ? "#2f6f4f" : "#ddd"}" stroke-width="${inWin ? 2.5 : 1}" opacity="${i <= wt ? 1 : .35}"/>`;
+    h += `<text x="${x + (dx - 8) / 2}" y="104" text-anchor="middle" font-size="11" fill="#6b6a65">t${i}</text>`;
+    if (i === EVT) for (const y of [64, 174]) h += `<text x="${x + (dx - 8) / 2}" y="${y}" text-anchor="middle" font-size="11">chase!</text>`;
+    if (i < N - 1 && i < wt) h += `<line x1="${x + dx - 8}" y1="205" x2="${x + dx}" y2="205" stroke="#7a3fd1" stroke-width="2"/>`;
+    if (i < wt) h += `<rect x="${x}" y="200" width="${dx - 8}" height="10" rx="3" fill="#7a3fd1" opacity="${i >= EVT ? .85 : .25}"/>`;
+  }
+  const seen = wt - EVT < 4, x = x0 + wt * dx;
+  if (wt >= EVT) {
+    h += `<text x="${x + (dx - 8) / 2}" y="30" text-anchor="middle" font-size="12" fill="${seen ? "#2f6f4f" : "#d4202a"}">${seen ? "sees it" : "forgot"}</text>`;
+    h += `<text x="${x + (dx - 8) / 2}" y="140" text-anchor="middle" font-size="12" fill="#7a3fd1">remembers</text>`;
+  }
+  h += `<text x="${x0}" y="235" font-size="12" fill="#7a3fd1">purple bar = memory passed to the next tick (darker = holds the chase)</text>`;
+  s.innerHTML = h;
+  document.getElementById("wvt").textContent = wt;
+  document.getElementById("wvnote").textContent = wt < EVT ? "nothing has happened yet"
+    : seen ? "the chase start is still inside the 4-frame window" : "the window has lost it; only the memory still knows";
+}
+drawWV();
+
+// ---- 2. toy GRU ----
+const events = Array.from({ length: 60 }, (_, i) => (i === 8 || i === 34) ? 1 : 0);
+function drawToy() {
+  const z = +document.getElementById("z").value; document.getElementById("zv").textContent = z.toFixed(2);
+  const c = document.getElementById("toy"), g = c.getContext("2d"), W = c.width, H = c.height, n = events.length;
+  g.clearRect(0, 0, W, H);
+  let m = 0, ms = [];
+  for (let i = 0; i < n; i++) { const cand = events[i] ? 1 : 0; const zi = events[i] ? 1 : z; m = (1 - zi) * m + zi * cand; ms.push(m); }
+  // events overwrite fully (the gate opens), otherwise z sets how fast it fades
+  for (let i = 0; i < n; i++) if (events[i]) { g.fillStyle = "#c9c5bb"; g.fillRect(i / n * W, 10, W / n, H - 30); }
+  g.strokeStyle = "#7a3fd1"; g.lineWidth = 2.5; g.beginPath();
+  ms.forEach((v, i) => { const x = (i + .5) / n * W, y = H - 20 - v * (H - 40); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+  g.fillStyle = "#6b6a65"; g.font = "11px system-ui"; g.fillText("ticks →", W - 50, H - 4);
+  const half = Math.log(0.5) / Math.log(1 - z);
+  document.getElementById("toynote").textContent = `With z = ${z.toFixed(2)} the memory loses half of what it held every ${half.toFixed(1)} ticks. The real net learns its own z per number, per cell, per tick: it can hold a fact for a long time and drop it the moment it stops mattering.`;
+}
+document.getElementById("z").oninput = drawToy; drawToy();
+
+// ---- 3. BPTT ----
+let sel = null;
+function drawBPTT() {
+  const s = document.getElementById("bptt"), T = 8, x0 = 40, dx = 112;
+  let h = `<defs><marker id="m1" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a3fd1"/></marker>
+    <marker id="m2" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 z" fill="#d4202a"/></marker></defs>`;
+  for (let i = 0; i < T; i++) {
+    const x = x0 + i * dx;
+    h += `<rect x="${x}" y="150" width="70" height="30" rx="4" fill="#eef4f0" stroke="#2f6f4f"/><text x="${x + 35}" y="170" text-anchor="middle" font-size="12">frames t${i + 1}</text>`;
+    h += `<rect x="${x}" y="90" width="70" height="36" rx="6" fill="#fff" stroke="#555"/><text x="${x + 35}" y="112" text-anchor="middle" font-size="12">net</text>`;
+    h += `<line x1="${x + 35}" y1="150" x2="${x + 35}" y2="128" stroke="#555"/>`;
+    h += `<line x1="${x + 35}" y1="90" x2="${x + 35}" y2="52" stroke="#555"/>`;
+    const blame = sel !== null && i <= sel ? Math.pow(0.7, sel - i) : 0;
+    h += `<circle cx="${x + 35}" cy="38" r="14" fill="${sel === i ? "#d4202a" : "#fbe3e4"}" stroke="#d4202a" style="cursor:pointer" onclick="sel=${i};drawBPTT()"/><text x="${x + 35}" y="42" text-anchor="middle" font-size="11" style="pointer-events:none" fill="${sel === i ? "#fff" : "#d4202a"}">err</text>`;
+    if (i < T - 1) h += `<line x1="${x + 70}" y1="108" x2="${x + dx - 2}" y2="108" stroke="#7a3fd1" stroke-width="2.5" marker-end="url(#m1)"/>`;
+    if (sel !== null && i < sel) h += `<line x1="${x + dx - 2}" y1="120" x2="${x + 72}" y2="120" stroke="#d4202a" stroke-width="${1 + 4 * Math.pow(0.7, sel - i - 1)}" opacity="${0.25 + 0.75 * Math.pow(0.7, sel - i - 1)}" marker-end="url(#m2)"/>`;
+    if (blame) h += `<rect x="${x}" y="90" width="70" height="36" rx="6" fill="#d4202a" opacity="${0.12 + 0.3 * blame}"/>`;
+  }
+  h += `<text x="${x0}" y="212" font-size="12" fill="#7a3fd1">purple: memory passed forward</text><text x="${x0 + 260}" y="212" font-size="12" fill="#d4202a">red: blame flowing back (fades with distance)</text><text x="${x0 + 600}" y="212" font-size="12" fill="#6b6a65">nothing flows past t1: truncated at 8 ticks</text>`;
+  s.innerHTML = h;
+  if (sel !== null) document.getElementById("bpttnote").textContent = `The error at t${sel + 1} adjusts the net at t${sel + 1} directly, and through the memory also what it wrote at t1–t${sel}, more weakly the further back. A window model could only adjust t${sel + 1}.`;
+}
+drawBPTT();
+</script>
+<script src="whiteboard.js"></script>
+<script>if (window.whiteboard) whiteboard.pageState = () => ({ tick: wt, z: +document.getElementById("z").value, bptt: sel });</script>
+</body></html>
