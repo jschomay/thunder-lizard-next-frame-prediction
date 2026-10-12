@@ -115,6 +115,7 @@ input[type=range]{vertical-align:middle}
 <tr><td>CPU time per frame</td><td>5.0 ms</td><td>6.1 ms</td><td></td></tr>
 </table>
 <p class="sub" style="font-size:13px">*One-step scores give the memory model an empty memory, which it never had in training, so they slightly understate it.</p>
+<p><b>Second try (bigger memory, as the commenter suggested):</b> an 89×89 memory canvas, about 2× the screen, trained on 128-tick sequences with a bot that walks out and comes back. <b>Continuity: 70.0%</b> vs 70.2% without memory (real game 95.4%). Smear got worse (86% vs 68%), and it's 3.6× slower. The memory <i>was</i> being used (later chunks had 11% lower loss), but remembering terrain barely matters to the training loss: only the single row revealed when you scroll back benefits.</p>
 <p><b>Verdict so far: a small edge, not a clear win.</b> Most of the improvement we first saw came from the extra training, not the memory. The memory still keeps dinos around a little better and smears a little less. It may matter more where we haven't tested yet: walking away and coming back (continuity), and training on sequences longer than 8 ticks (~0.6 s of game time).</p>
 </div>
 </main>

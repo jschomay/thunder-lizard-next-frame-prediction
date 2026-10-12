@@ -653,3 +653,23 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 - Candidate new best: **s3-unet-more2** (simpler; best one-step numbers), pending Jeff's play-test.
 - **Play-test of s3-unet-more2 (Jeff):** "feels the same" as the live model, so the live model stays (no redeploy). Walking away and back loses the earlier terrain completely. That's expected for every current model (a 4-frame window; even the H15 memory is screen-sized, so terrain that scrolls off is lost). Plan: add a continuity score to the scorecard (walk N away, walk back, measure the match).
 - **On the LinkedIn claim** ("temporal consistency requires recurrence"): right in direction, "requires" overstated (windows and attention are the alternatives). Our H15 was the easy version: the memory was added on top of a model that already works from 4 frames, it trained only on real inputs, 8-tick sequences, a screen-sized memory. A fairer test: 1 frame + memory from scratch vs the 4-frame window; training on its own predictions over 32+ ticks; a memory bigger than the screen, plus the continuity score.
+
+## 2026-10-12 — H15b: 89×89 memory canvas, 128-tick sequences (s3-gru-canvas)
+- Following the LinkedIn commenter's advice: a ConvGRU memory canvas about 2× the view (`--mem-pad 22`), 128-tick sequences with truncated backprop in 32-tick chunks, plus new **backtracking bot data** (`--scenario backtrack`: walk out, retrace; 402 games, 87k ticks; mixed 50/50 with stage-3). Width kept at 64: the full 128-width version was ~11× live compute (blows the browser budget). 1 epoch, 63 min.
+- New **continuity score** (scorecard): roll out from a real moment, replay the real keys through a walk-away-and-back, compare the model's frame on return with where it started (lava excluded). Real game 95.4%. Backfilled: best-so-far 62.2, h8 65.9, more2 70.2, gru(8-tick) 70.6.
+- Live signal: chunk losses. In the second half of the epoch, chunks that start with memory had 11% lower loss than chunk 1 (no difference in the first half), so the memory was being used.
+- **Scorecard (24 games):**
+
+| | more2 (no memory) | s3-gru-canvas | real |
+|---|---|---|---|
+| continuity | 70.2 | **70.0** | 95.4 |
+| biggest terrain type (smear) | 68 | **86** ❌ | ~59 |
+| dinos per frame | 1.25 | 1.22 | ~1.5 |
+| scroll when key held | 41 | 41 | 44 |
+| terrain changed acc | 88.1 | 88.3 | |
+| dino move right | 48.9 | 47.7 | |
+| CPU ms/frame | 5.0 | **18.2** | |
+
+- **Negative result:** no continuity gain, worse smear in rollouts, 3.6× slower.
+- Likely why: with real frames as training input, remembering terrain only pays off on the single edge row revealed when scrolling back (~45 of 2,025 cells, on some ticks), so the loss barely rewards it. One epoch is also short for a new memory.
+- Scorecards are now pushed to W&B as `score/*`.

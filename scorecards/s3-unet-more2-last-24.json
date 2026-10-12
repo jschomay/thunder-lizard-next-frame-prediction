@@ -10,5 +10,6 @@
  "max_share": 68,
  "dinos": 1.25,
  "scroll_when_key": 41,
- "cpu_ms": 5.0
+ "cpu_ms": 5.0,
+ "continuity": 70.2
 }
