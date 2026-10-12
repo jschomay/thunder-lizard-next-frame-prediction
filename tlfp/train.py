@@ -165,6 +165,8 @@ def main():
     p.add_argument("--corrupt", type=float, default=0.0, help="share of examples with damaged input frames (H8)")
     p.add_argument("--recurrent", action="store_true", help="ConvGRU memory across ticks (H15)")
     p.add_argument("--seq", type=int, default=8, help="ticks per training sequence with --recurrent")
+    p.add_argument("--chunk", type=int, default=0, help="truncated backprop: chunk length within --seq (0 = whole)")
+    p.add_argument("--mem-pad", type=int, default=0, help="memory canvas extends this far past each screen edge (H15b)")
     p.add_argument("--fates", action="store_true", help="per-entity fate head (H13)")
     p.add_argument("--unet", action="store_true", help="add a zero-initialized shrink-and-grow branch")
     p.add_argument("--init", default=None, help="start from a checkpoint's weights (warm start, H4)")
@@ -193,10 +195,11 @@ def main():
         import wandb
         run = wandb.init(project="thunder-lizard-frame-prediction", name=args.name,
                          config={**vars(args), "params": n_params, "train_examples": len(train)})
+        args.wandb_id = run.id  # saved with checkpoints, so the scorecard can attach its numbers
 
     if args.recurrent:  # same frames per step: batch/seq sequences of seq ticks
-        starts, nseq = train.seq_starts(args.seq), max(1, args.batch // args.seq)
-    steps_per_epoch = len(train) // args.batch
+        starts, nseq = train.seq_starts(args.seq), max(1, args.batch // min(args.seq, args.chunk or args.seq))
+    steps_per_epoch = len(train) // (nseq * args.seq) if args.recurrent else len(train) // args.batch
     total_steps = steps_per_epoch * args.epochs
     warmup_steps = max(1, int(total_steps * args.warmup))
     # linear warmup, then cosine decay to 5% of the peak learning rate
@@ -224,12 +227,24 @@ def main():
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             if args.recurrent:  # H15: T consecutive ticks; the memory flows through all of them
+                rows = starts[order[b * nseq:(b + 1) * nseq]]
                 model.carry, model.state = True, None
-                losses = [step_loss(model, args, *train.batch(starts[order[b * nseq:(b + 1) * nseq]] + i))
-                          for i in range(args.seq)]
-                model.carry, model.state = False, None
-                loss, loss_t, loss_e = (sum(x[j] for x in losses) / args.seq for j in range(3))
-                loss_f = sum(x[3] for x in losses) / args.seq if args.fates else None
+                chunk = args.chunk or args.seq
+                chunk_losses = []
+                for c0 in range(0, args.seq, chunk):
+                    # truncated backprop: errors flow back within a chunk; the memory itself is
+                    # carried into the next chunk, but not differentiated through
+                    if model.state is not None:
+                        model.state = model.state.detach()
+                    losses = [step_loss(model, args, *train.batch(rows + i)) for i in range(c0, min(c0 + chunk, args.seq))]
+                    loss, loss_t, loss_e = (sum(x[j] for x in losses) / len(losses) for j in range(3))
+                    loss_f = sum(x[3] for x in losses) / len(losses) if args.fates else None
+                    if c0 + chunk < args.seq:  # every chunk but the last steps here; the last below
+                        opt.zero_grad(); loss.backward()
+                        if args.clip:
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+                        opt.step()
+                    chunk_losses.append(loss.item())
             else:
                 loss, loss_t, loss_e, loss_f = step_loss(model, args, context, keys, target, fate,
                                                          clean_last if args.corrupt else None)
@@ -238,11 +253,14 @@ def main():
             if args.clip:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             opt.step()
+            if args.recurrent:
+                model.carry, model.state = False, None
             step += 1
             if args.max_steps and step >= args.max_steps:
                 break
             if run and step % 20 == 0:
                 run.log({"train/loss": loss.item(), "train/loss_terrain": loss_t.item(),
+                         **({f"train/loss_chunk{i + 1}": v for i, v in enumerate(chunk_losses)} if args.recurrent else {}),
                          "train/loss_entity": loss_e.item(), **({"train/loss_fate": loss_f.item()} if args.fates else {}), "train/lr": lr_at(step),
                          "epoch": step / steps_per_epoch}, step=step)
             if step % eval_every == 0:

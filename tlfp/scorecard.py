@@ -17,6 +17,8 @@ Rollouts (8 games x 150 ticks, the app's step: dice for dinos, edge spawns, lava
   max_share           biggest single terrain type, worst frame (real ~59%)
   dinos               dinos per frame (real ~1.5)
   scroll_when_key     ticks with a key held where the view scrolled (real ~44%)
+  continuity          walk away and come back (backtrack games): share of terrain where the model's
+                      frame on return matches the frame it left from (real ~95%+; current models ~0?)
 Speed: CPU ms per frame.
 """
 
@@ -37,6 +39,42 @@ from tlfp.rollout import model_step, reset_memory
 from tlfp.train import Frames
 
 VAL_DATA = ["data/stage3-100k", "data/stage3-100k-b"]
+BACKTRACK_DATA = ["data/stage3-backtrack", "data/stage3-backtrack-b"]
+
+
+def return_pairs(ep, max_pairs=2):
+    """(a, b): the real view at b is ~the view at a, and it went elsewhere in between"""
+    t = np.asarray(ep.obs)[:, 0]
+    out = []
+    a = 4
+    while a < len(t) - 25 and len(out) < max_pairs:
+        for b in range(a + 20, min(a + 120, len(t))):
+            if (t[a] == t[b]).mean() > 0.9 and min((t[a] == t[c]).mean() for c in range(a + 1, b)) < 0.5:
+                out.append((a, b)); a = b
+                break
+        a += 5
+    return out
+
+
+@torch.no_grad()
+def continuity(model, n_pairs=20) -> float:
+    """roll out from a with the real keys until b; compare the model's frame at b to the frame at a"""
+    _, val = split_by_episode(find_episodes(*BACKTRACK_DATA), 0.1, seed=0)
+    gen = torch.Generator().manual_seed(0)
+    scores = []
+    for ep in val:
+        obs, acts = np.asarray(ep.obs), np.asarray(ep.actions)
+        for a, b in return_pairs(ep):
+            reset_memory(model)
+            hist = [obs[a - i] for i in range(model.k - 1, -1, -1)]
+            for t in range(a, b):
+                hist.append(model_step(model, hist, int(acts[t]), "cpu", "fates", gen))
+            start, back = obs[a][0], hist[-1][0]
+            keep = (start != 6) & (start != 7) & (back != 6) & (back != 7)  # lava changes on its own
+            scores.append(float((start == back)[keep].mean()))
+        if len(scores) >= n_pairs:
+            break
+    return round(100 * float(np.mean(scores)), 1) if scores else float("nan")
 DIRS = {1: (-1, 0), 2: (0, 1), 3: (1, 0), 4: (0, -1)}
 
 
@@ -116,6 +154,7 @@ def main():
     p.add_argument("checkpoint")
     p.add_argument("--name", default=None)
     p.add_argument("--eps", type=int, default=8, help="rollout games (8 is quick but noisy)")
+    p.add_argument("--no-wandb", action="store_true")
     args = p.parse_args()
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     ck = torch.load(args.checkpoint, map_location="cpu")
@@ -127,6 +166,7 @@ def main():
     out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True), dev)
     model = model.cpu()
     out |= rollouts(model, val, n_eps=args.eps)
+    out["continuity"] = continuity(model)
     x, k = torch.zeros(1, model.k, 2, 45, 45, dtype=torch.long), torch.tensor([0])
     for _ in range(5):
         model.forward_parts(x, k)
@@ -138,6 +178,29 @@ def main():
     Path("scorecards").mkdir(exist_ok=True)
     Path(f"scorecards/{name}.json").write_text(json.dumps(out, indent=1))
     print(f"{name}: " + "  ".join(f"{k}={v}" for k, v in out.items()))
+    if not args.no_wandb:
+        push_to_wandb(c, out)
+
+
+def push_to_wandb(config: dict, scores: dict):
+    """attach the scorecard to the training run in W&B as score/* summary values (for the
+    parallel-coordinates chart); finds the run by its saved id, else by name"""
+    try:
+        import wandb
+        api = wandb.Api()
+        path = f"{api.default_entity}/thunder-lizard-frame-prediction"
+        if config.get("wandb_id"):
+            runs = [api.run(f"{path}/{config['wandb_id']}")]
+        else:
+            runs = list(api.runs(path, filters={"display_name": config.get("name")}))
+        for r in runs:
+            for k, v in scores.items():
+                if isinstance(v, (int, float)):
+                    r.summary[f"score/{k}"] = v
+            r.summary.update()
+        print(f"  attached to W&B run(s): {[r.name for r in runs]}")
+    except Exception as err:  # never lose a scorecard over W&B
+        print(f"  (W&B upload skipped: {err})")
 
 
 if __name__ == "__main__":

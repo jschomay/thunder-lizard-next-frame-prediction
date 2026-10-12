@@ -66,7 +66,8 @@ def group_entity(e: torch.Tensor):
 def build_model(c: dict) -> "CNN":
     return CNN(c["k"], c["width"], c["depth"], copy_prior=c.get("copy_prior", False),
                split_entity=c.get("split_entity", False), unet=c.get("unet", False),
-               fates=c.get("fates", False), recurrent=c.get("recurrent", False))
+               fates=c.get("fates", False), recurrent=c.get("recurrent", False),
+               mem_pad=c.get("mem_pad", 0))
 
 
 class ConvGRUCell(nn.Module):
@@ -98,7 +99,7 @@ def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
 class CNN(nn.Module):
     def __init__(self, k: int = 2, width: int = 64, depth: int = 6, copy_prior: bool = False,
                  split_entity: bool = False, unet: bool = False, fates: bool = False,
-                 recurrent: bool = False):
+                 recurrent: bool = False, mem_pad: int = 0):
         super().__init__()
         self.k = k
         # copy prior (H10): add a learned bonus to the class each cell had in the last frame,
@@ -128,6 +129,9 @@ class CNN(nn.Module):
         # on the model: set .carry = True and .state = None at the start of a sequence/rollout;
         # with carry off (one-step evaluation) every call starts from an empty memory.
         self.recurrent, self.carry, self.state = recurrent, False, None
+        # H15b: the memory canvas extends mem_pad cells past each screen edge (22 -> 89x89, about 2x
+        # the view), so what scrolls off screen can stay in memory; the net must learn to shift it
+        self.mem_pad = mem_pad
         if recurrent:
             self.gru = ConvGRUCell(width)
             self.mem_out = nn.Conv2d(width, width, 1)
@@ -154,11 +158,13 @@ class CNN(nn.Module):
         """terrain logits, and entity logits (42) or (kind, dir, level) when split"""
         h = self.body(encode_input(context, keys))
         if self.recurrent:
-            prev = self.state if (self.carry and self.state is not None) else torch.zeros_like(h)
-            mem = self.gru(h, prev)
+            p = self.mem_pad
+            x = F.pad(h, (p, p, p, p)) if p else h
+            prev = self.state if (self.carry and self.state is not None) else torch.zeros_like(x)
+            mem = self.gru(x, prev)
             if self.carry:
                 self.state = mem
-            h = h + self.mem_out(mem)
+            h = h + self.mem_out(mem[:, :, p:p + h.shape[-2], p:p + h.shape[-1]] if p else mem)
         if self.unet:
             g = F.interpolate(self.down(h), size=h.shape[-2:], mode="nearest")
             h = h + self.up(torch.cat([h, g], 1))

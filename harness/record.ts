@@ -27,6 +27,7 @@ const ticks = Number(args.ticks ?? 500)
 const firstSeed = Number(args.seed ?? 1)
 const outDir = args.out ?? join(__dirname, "..", "data", `stage${stage}`)
 // --scenario lava-still: player starts a few cells from lava and never moves (clean lava-growth test, H12)
+// --scenario backtrack: walks out and comes back the same way (continuity training/testing, H15b)
 // --scenario coast: player starts near ocean and often pushes into it (blocked moves were the top error)
 const scenario = args.scenario
 
@@ -64,6 +65,27 @@ class CoastBot extends StickyBot {
     this.key2 = best === "NONE" ? super.act() : best
     this.left2 = ROT.RNG.getUniformInt(4, 15)
     return this.key2
+  }
+}
+
+// Walks a direction for a while, then retraces its steps (same keys reversed, same timing), so the
+// view returns to places it has seen. Occasionally idles or wanders like StickyBot.
+class BacktrackBot extends StickyBot {
+  private plan: Key[] = []
+  act(): Key {
+    if (!this.plan.length) {
+      if (ROT.RNG.getPercentage() <= 25) return super.act()
+      const opposite: Record<string, Key> = { UP: "DOWN", DOWN: "UP", LEFT: "RIGHT", RIGHT: "LEFT" }
+      const legs = ROT.RNG.getUniformInt(1, 2)
+      const out: Key[] = []
+      for (let i = 0; i < legs; i++) {
+        const k = ROT.RNG.getItem(["UP", "RIGHT", "DOWN", "LEFT"] as Key[])!
+        for (let n = ROT.RNG.getUniformInt(10, 40); n > 0; n--) out.push(k)
+      }
+      const pause: Key[] = Array(ROT.RNG.getUniformInt(0, 8)).fill("NONE")
+      this.plan = [...out, ...pause, ...[...out].reverse().map(k => opposite[k])]
+    }
+    return this.plan.shift()!
   }
 }
 
@@ -105,7 +127,7 @@ let totalTicks = 0
 for (let e = 0; e < episodes; e++) {
   const seed = firstSeed + e
   const game = new HeadlessGame({ seed, ...STAGES[stage] })
-  const bot = scenario === "lava-still" ? { act: (): Key => "NONE" } : scenario === "coast" ? new CoastBot(game) : new StickyBot()
+  const bot = scenario === "lava-still" ? { act: (): Key => "NONE" } : scenario === "coast" ? new CoastBot(game) : scenario === "backtrack" ? new BacktrackBot() : new StickyBot()
   if (scenario === "lava-still") placeNearLava(game, 12)
   if (scenario === "coast") placeNearOcean(game)
   const frame = 2 * VIEW * VIEW
