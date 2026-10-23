@@ -12,9 +12,16 @@ Options for stage 3:
   unet: a shrink-and-grow branch that sees the whole screen at 1/4 size, added to the
       full-size features. Its last layer starts at zero, so a warm-started model begins
       exactly as the plain CNN and learns to use the branch.
+  diffuse (H16): masked diffusion for terrain. The net also sees a draft of the next frame's
+      terrain in which some cells are known and the rest are "unknown" (MASK). Training hides a
+      random share of the real next frame and scores only the hidden cells; generating starts
+      fully hidden and fills the most confident cells over a few passes (diffuse_terrain), so
+      later choices can agree with earlier ones instead of every cell guessing alone.
 """
 
 from __future__ import annotations
+
+import math
 
 import torch
 import torch.nn.functional as F
@@ -24,6 +31,7 @@ from tlfp.data import N_ENTITY, N_TERRAIN
 
 N_KEYS = 5
 N_KIND, N_DIR, N_LEVEL = 4, 4, 5  # kind: 0 empty, 1 player, 2 dino, 3 skeleton
+MASK = N_TERRAIN  # "unknown" terrain in a diffusion draft
 
 
 def split_ids(e: torch.Tensor):
@@ -67,7 +75,8 @@ def build_model(c: dict) -> "CNN":
     return CNN(c["k"], c["width"], c["depth"], copy_prior=c.get("copy_prior", False),
                split_entity=c.get("split_entity", False), unet=c.get("unet", False),
                fates=c.get("fates", False), recurrent=c.get("recurrent", False),
-               mem_pad=c.get("mem_pad", 0))
+               mem_pad=c.get("mem_pad", 0), diffuse=c.get("diffuse", False),
+               noise_level=c.get("noise_level", False))
 
 
 class ConvGRUCell(nn.Module):
@@ -99,7 +108,8 @@ def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
 class CNN(nn.Module):
     def __init__(self, k: int = 2, width: int = 64, depth: int = 6, copy_prior: bool = False,
                  split_entity: bool = False, unet: bool = False, fates: bool = False,
-                 recurrent: bool = False, mem_pad: int = 0):
+                 recurrent: bool = False, mem_pad: int = 0, diffuse: bool = False,
+                 noise_level: bool = False):
         super().__init__()
         self.k = k
         # copy prior (H10): add a learned bonus to the class each cell had in the last frame,
@@ -136,6 +146,20 @@ class CNN(nn.Module):
             self.gru = ConvGRUCell(width)
             self.mem_out = nn.Conv2d(width, width, 1)
             nn.init.zeros_(self.mem_out.weight); nn.init.zeros_(self.mem_out.bias)
+        # H16: the draft (8 terrain + unknown one-hot, plus the share still unknown) mixed into the
+        # features before the U-Net; starts at zero, so a warm start begins as the one-shot model
+        self.diffuse, self.steps = diffuse, 4
+        if diffuse:
+            self.draft_in = nn.Sequential(nn.Conv2d(N_TERRAIN + 2, width, 3, padding=1), nn.ReLU(),
+                                          nn.Conv2d(width, width, 3, padding=1))
+            nn.init.zeros_(self.draft_in[-1].weight); nn.init.zeros_(self.draft_in[-1].bias)
+        # GameNGen-style: the net is told how damaged its input frames are (0 = clean; rollouts use 0
+        # or a small value), so it can learn to repair damage. Starts at zero.
+        self.noise_level = noise_level
+        if noise_level:
+            self.level_in = nn.Linear(1, width)
+            nn.init.zeros_(self.level_in.weight); nn.init.zeros_(self.level_in.bias)
+        self.rollout_level = 0.0
         self.unet = unet
         if unet:  # 45 -> 23 -> 12 and back; each 3x3 at 12x12 sees ~1/4 of the screen
             self.down = nn.Sequential(
@@ -154,9 +178,21 @@ class CNN(nn.Module):
             e = combine(*e)
         return t, e
 
-    def forward_parts(self, context: torch.Tensor, keys: torch.Tensor):
-        """terrain logits, and entity logits (42) or (kind, dir, level) when split"""
+    def forward_parts(self, context: torch.Tensor, keys: torch.Tensor, draft: torch.Tensor | None = None,
+                      level: torch.Tensor | None = None):
+        """terrain logits, and entity logits (42) or (kind, dir, level) when split.
+        draft (diffuse only): int [B, 45, 45] next-frame terrain, MASK where unknown; None = all unknown"""
         h = self.body(encode_input(context, keys))
+        if self.noise_level:  # level: [B] damage level of the input frames; None = rollout_level
+            if level is None:
+                level = torch.full((len(h),), self.rollout_level, device=h.device)
+            h = h + self.level_in(level[:, None].float())[:, :, None, None]
+        if self.diffuse:
+            if draft is None:
+                draft = torch.full_like(context[:, -1, 0], MASK)
+            d = F.one_hot(draft, N_TERRAIN + 1).permute(0, 3, 1, 2).float()
+            share = d[:, -1:].mean((2, 3), keepdim=True).expand_as(d[:, -1:])
+            h = h + self.draft_in(torch.cat([d, share], 1))
         if self.recurrent:
             p = self.mem_pad
             x = F.pad(h, (p, p, p, p)) if p else h
@@ -184,3 +220,41 @@ class CNN(nn.Module):
         """Most likely next frame: int [B, 2, 45, 45]"""
         t, e = self(context, keys)
         return torch.stack([t.argmax(1), e.argmax(1)], dim=1)
+
+
+@torch.no_grad()
+def diffuse_terrain(model, context, keys, steps: int | None = None, sample=None, gen=None, temp: float = 1.0,
+                    order_noise: float | None = None):
+    """H16: generate next-frame terrain in a few passes. Each pass guesses every unknown cell, then
+    keeps the most confident guesses and leaves the rest unknown (a cosine schedule: few cells are
+    fixed early, more later). sample: bool [B,45,45] cells drawn from the probabilities (at temp)
+    instead of argmax. order_noise (MaskGIT): random noise on the confidence ranking, fading to 0 by the
+    last pass, so which cells are fixed first is partly random (the values stay argmax). Returns (terrain [B,45,45], drafts per pass, the last pass's outputs)."""
+    steps = steps or model.steps
+    order_noise = getattr(model, "order_noise", 0.0) if order_noise is None else order_noise
+    B, _, _, H, W = context.shape
+    draft = torch.full((B, H, W), MASK, dtype=torch.long, device=context.device)
+    drafts = []
+    for s in range(steps):
+        out = model.forward_parts(context, keys, draft)
+        p = out[0].softmax(1)
+        choice = p.argmax(1)
+        if sample is not None and sample.any():
+            q = (out[0] / temp).softmax(1).permute(0, 2, 3, 1).reshape(-1, p.shape[1]).cpu()
+            drawn = torch.multinomial(q, 1, generator=gen).reshape(B, H, W).to(choice.device)
+            choice = torch.where(sample.to(choice.device), drawn, choice)
+        conf = p.gather(1, choice[:, None])[:, 0]
+        unknown = draft == MASK
+        rank = conf
+        if order_noise:
+            u = torch.rand(conf.shape, generator=gen).to(conf.device).clamp(1e-9, 1 - 1e-9)
+            rank = conf.log() + order_noise * (1 - s / steps) * -torch.log(-torch.log(u))
+        rank = torch.where(unknown, rank, torch.full_like(rank, float("inf")))
+        left = int(H * W * math.cos(math.pi / 2 * (s + 1) / steps))  # still unknown after this pass
+        new = torch.where(unknown, choice, draft)
+        if left > 0:
+            low = rank.flatten(1).argsort(1)[:, :left]
+            new = new.flatten(1).scatter(1, low, MASK).reshape(B, H, W)
+        draft = new
+        drafts.append((draft.clone(), conf.clamp(max=1.0)))
+    return draft, drafts, out

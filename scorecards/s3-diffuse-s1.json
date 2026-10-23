@@ -1,0 +1,15 @@
+{
+ "terrain_changed": 87.8,
+ "player_move_right": 93.0,
+ "ocean_block": 99.8,
+ "dino_move_right": 49.1,
+ "dino_moves_pred": 30.8,
+ "chase_near": "24/9/67",
+ "chase_near_real": "29/12/60",
+ "static": 0.237,
+ "max_share": 69,
+ "dinos": 1.45,
+ "scroll_when_key": 42,
+ "continuity": 68.0,
+ "cpu_ms": 4.9
+}

@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 from tlfp.data import find_episodes, split_by_episode
 from tlfp.metrics import add, frame_metrics, summarize
-from tlfp.model import build_model, split_ids
+from tlfp.model import MASK, build_model, split_ids
 from tlfp.moves import episode_fates
 
 
@@ -73,7 +73,7 @@ class Frames:
         return context, keys, target
 
 
-def corrupt(context: torch.Tensor, p: float, max_rate: float = 0.03) -> torch.Tensor:
+def corrupt(context: torch.Tensor, p: float, max_rate: float = 0.03, with_rate: bool = False):
     """H8: damage some examples' input frames (the target stays real), so the net learns to repair
     small mistakes instead of building on them in rollouts. For a fraction p of examples, each at a
     random rate up to max_rate:
@@ -83,7 +83,7 @@ def corrupt(context: torch.Tensor, p: float, max_rate: float = 0.03) -> torch.Te
     ctx = context.clone()
     pick = torch.rand(B, device=ctx.device) < p
     if not pick.any():
-        return ctx
+        return (ctx, torch.zeros(B, device=ctx.device)) if with_rate else ctx
     rate = torch.rand(B, 1, 1, 1, device=ctx.device) * max_rate * pick[:, None, None, None]
     t = ctx[:, :, 0]
     hit = torch.rand(t.shape, device=ctx.device) < rate
@@ -93,9 +93,9 @@ def corrupt(context: torch.Tensor, p: float, max_rate: float = 0.03) -> torch.Te
     speckle = torch.randint(0, 8, t.shape, device=ctx.device)
     ctx[:, :, 0] = torch.where(hit & smear, neighbour, torch.where(hit, speckle, t))
     e = ctx[:, :-1, 1]
-    drop = (e >= 21) & (e <= 40) & (torch.rand(e.shape, device=ctx.device) < rate * 10)
+    drop = (e >= 21) & (e <= 40) & (torch.rand(e.shape, device=ctx.device) < (rate * 10).clamp(max=0.3))
     ctx[:, :-1, 1] = torch.where(drop, 0, e)
-    return ctx
+    return (ctx, rate.flatten() / max_rate) if with_rate else ctx
 
 
 def evaluate(model, data: Frames, batch_size=256) -> dict[str, float]:
@@ -110,10 +110,17 @@ def evaluate(model, data: Frames, batch_size=256) -> dict[str, float]:
     return summarize(totals)
 
 
-def step_loss(model, args, context, keys, target, fate, clean_last=None):
+def step_loss(model, args, context, keys, target, fate, clean_last=None, level=None):
     """loss for one batch of next-frame predictions -> (loss, terrain, entity, fate or None)"""
     loss_f = None
-    t_logits, e_out, *fate_logits = model.forward_parts(context, keys)
+    hide = None
+    if args.diffuse:  # H16: hide a random share of the real next terrain (cosine: mostly large shares)
+        share = torch.cos(math.pi / 2 * torch.rand(len(target), 1, 1, device=target.device))
+        hide = torch.rand(target[:, 0].shape, device=target.device) < share
+        draft = torch.where(hide, MASK, target[:, 0])
+        t_logits, e_out, *fate_logits = model.forward_parts(context, keys, draft, level=level)
+    else:
+        t_logits, e_out, *fate_logits = model.forward_parts(context, keys, level=level)
     # per-cell losses, with cells that change weighted up (H9)
     changed = (clean_last if clean_last is not None else context[:, -1]) != target
     w = 1 + (args.changed_weight - 1) * changed.float()
@@ -122,7 +129,8 @@ def step_loss(model, args, context, keys, target, fate, clean_last=None):
         d = (has(context[:, -1, 1]) | has(target[:, 1])).float()
         w = w * (1 + (args.dino_weight - 1) * d[:, None])
     ce_t = F.cross_entropy(t_logits, target[:, 0], reduction="none")
-    loss_t = (ce_t * w[:, 0]).sum() / w[:, 0].sum()
+    wt = w[:, 0] * hide if hide is not None else w[:, 0]  # diffusion: score only the hidden cells
+    loss_t = (ce_t * wt).sum() / wt.sum().clamp(min=1)
     if args.split_entity:
         # "what's here" is scored everywhere; facing and level only where there is a dino.
         # All three are averaged over every cell, like terrain: averaging facing/level over
@@ -163,11 +171,14 @@ def main():
     p.add_argument("--max-steps", type=int, default=0, help="stop early (smoke tests)")
     p.add_argument("--split-entity", action="store_true", help="what's-here / facing / level heads (H11)")
     p.add_argument("--corrupt", type=float, default=0.0, help="share of examples with damaged input frames (H8)")
+    p.add_argument("--corrupt-max", type=float, default=0.03, help="max share of damaged cells (H8)")
+    p.add_argument("--noise-level", action="store_true", help="tell the net how damaged its input is (GameNGen)")
     p.add_argument("--recurrent", action="store_true", help="ConvGRU memory across ticks (H15)")
     p.add_argument("--seq", type=int, default=8, help="ticks per training sequence with --recurrent")
     p.add_argument("--chunk", type=int, default=0, help="truncated backprop: chunk length within --seq (0 = whole)")
     p.add_argument("--mem-pad", type=int, default=0, help="memory canvas extends this far past each screen edge (H15b)")
     p.add_argument("--fates", action="store_true", help="per-entity fate head (H13)")
+    p.add_argument("--diffuse", action="store_true", help="masked diffusion for terrain (H16)")
     p.add_argument("--unet", action="store_true", help="add a zero-initialized shrink-and-grow branch")
     p.add_argument("--init", default=None, help="start from a checkpoint's weights (warm start, H4)")
     p.add_argument("--no-wandb", action="store_true")
@@ -223,7 +234,7 @@ def main():
                 fate = fate[0] if fate else None
             if args.corrupt and not args.recurrent:
                 clean_last = context[:, -1]
-                context = corrupt(context, args.corrupt)
+                context, level = corrupt(context, args.corrupt, args.corrupt_max, with_rate=True)
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             if args.recurrent:  # H15: T consecutive ticks; the memory flows through all of them
@@ -247,7 +258,8 @@ def main():
                     chunk_losses.append(loss.item())
             else:
                 loss, loss_t, loss_e, loss_f = step_loss(model, args, context, keys, target, fate,
-                                                         clean_last if args.corrupt else None)
+                                                         clean_last if args.corrupt else None,
+                                                         level if args.corrupt else None)
             opt.zero_grad()
             loss.backward()
             if args.clip:

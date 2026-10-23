@@ -1,0 +1,205 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diffusion (H16)</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f;--code:#f1efe9;--dif:#1f6fd1;--err:#d4202a}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 80px}
+nav a{margin-right:14px;color:var(--acc)}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:30px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:10px 0}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.col{flex:1 1 300px;min-width:0}
+.fig{text-align:center;font-size:13px;color:var(--mut)}
+.fig canvas{display:block;margin:0 auto 4px;max-width:100%;image-rendering:pixelated;border:1px solid var(--line)}
+code{font-family:ui-monospace,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;font-size:13px}
+.btn{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--fg);background:var(--card);border-radius:4px;cursor:pointer}
+.btn.on{background:var(--fg);color:var(--bg)}
+table{border-collapse:collapse;font-size:13.5px;width:100%}td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+svg{max-width:100%;height:auto;display:block}svg text{font-family:system-ui,sans-serif}
+.k{font-weight:700}
+.legend .sw{display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:12.5px}.legend i{width:12px;height:12px;display:inline-block}
+</style></head>
+<body><main>
+<nav><a href="index.html">Plan</a><a href="how.html">How it works</a><a href="concepts.html">Model concepts</a><a href="inside.html">Inside the model</a><a href="memory.html">Memory (H15)</a><a href="diffusion.html"><b>Diffusion (H16)</b></a><a href="data.html">Data</a><a href="predictions.html">Predictions</a><a href="play.html">Play in the net</a><a href="precedents.html">Precedents</a></nav>
+<h1>Drawing the frame in passes (diffusion, H16)</h1>
+<p class="sub">Why the terrain smears, how masked diffusion tries to fix it, and how it plugs into the U-Net we already have.</p>
+
+<h2 data-wb="sec-why">1. Why guessing every cell at once smears</h2>
+<p>Today the net writes all 2025 cells in one go, and <b>each cell is decided alone</b>: it can't see what its neighbours picked. Suppose a strip of new terrain is 50/50 grass or dirt, and in reality it's a few clean blobs of each. <i>Toy example, not the net:</i></p>
+<div class="card" data-wb="toy">
+  <div class="row" id="toyrow"></div>
+  <div style="margin-top:6px"><button class="btn" onclick="toyPass(-1)">◀</button> <button class="btn" onclick="toyPass(1)">▶</button> diffusion pass <span class="k" id="toyp">0</span> / 4 <span class="sub" id="toynote"></span></div>
+</div>
+<ul>
+<li><b>Argmax</b> (what we use): every cell picks its slight favourite, so the whole strip becomes one type. Repeat for 100 frames and the most common terrain spreads: <b>smear</b>.</li>
+<li><b>Sampling every cell</b> (H5, refuted): every cell rolls its own die, which gives <b>speckle</b>.</li>
+<li><b>Diffusion</b>: fix a few cells, then guess again <i>seeing</i> them, so the next cells can join a blob instead of guessing alone.</li>
+</ul>
+
+<h2 data-wb="sec-masked">2. Masked diffusion (our choice) vs noise diffusion</h2>
+<table data-wb="masked-vs-noise">
+<tr><th></th><th>Masked (ours)</th><th>Noise (classic image diffusion)</th></tr>
+<tr><td>Starting draft</td><td>Every cell <b>"unknown"</b></td><td>Random noise</td></tr>
+<tr><td>Each pass</td><td>Guess all unknown cells, <b>keep the most confident</b>, leave the rest unknown</td><td>Remove a little noise everywhere</td></tr>
+<tr><td>Passes</td><td>4–8</td><td>20–1000</td></tr>
+<tr><td>Fits</td><td>Categories (ocean, grass, lava…): <b>our cells</b></td><td>Smooth pixel colours</td></tr>
+<tr><td>Known as</td><td>MaskGIT, discrete/absorbing diffusion</td><td>DDPM, Stable Diffusion</td></tr>
+</table>
+
+<h2 data-wb="sec-unet">3. Where the U-Net fits</h2>
+<p>The U-Net is the <b>network</b> (the shape of the layers). Diffusion is the <b>recipe</b> for training it and calling it. Stable Diffusion uses a U-Net too. We keep ours and add one input, the draft, through a small new layer that starts at zero, so at the start the model behaves exactly like best-so-far.</p>
+<div class="card" data-wb="unet-diagram"><svg viewBox="0 0 960 250">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#1d1d1b"/></marker></defs>
+<g font-size="14">
+<rect x="10" y="30" width="150" height="60" rx="6" fill="#eee" stroke="#999"/><text x="85" y="56" text-anchor="middle">4 past frames</text><text x="85" y="76" text-anchor="middle">+ key</text>
+<rect x="10" y="150" width="150" height="60" rx="6" fill="#dbe8fb" stroke="#1f6fd1"/><text x="85" y="176" text-anchor="middle" fill="#1f6fd1" font-weight="700">draft of next</text><text x="85" y="196" text-anchor="middle" fill="#1f6fd1">frame (known + ?)</text>
+<rect x="210" y="30" width="140" height="60" rx="6" fill="#fff" stroke="#999"/><text x="280" y="64" text-anchor="middle">CNN body</text>
+<rect x="210" y="150" width="140" height="60" rx="6" fill="#fff" stroke="#1f6fd1"/><text x="280" y="176" text-anchor="middle" fill="#1f6fd1">draft layer</text><text x="280" y="196" text-anchor="middle" fill="#1f6fd1" font-size="12">new, starts at 0</text>
+<circle cx="400" cy="120" r="16" fill="#fff" stroke="#999"/><text x="400" y="126" text-anchor="middle" font-size="20">+</text>
+<rect x="450" y="90" width="140" height="60" rx="6" fill="#fff" stroke="#999"/><text x="520" y="124" text-anchor="middle">U-Net branch</text>
+<rect x="640" y="20" width="150" height="50" rx="6" fill="#fff" stroke="#999"/><text x="715" y="50" text-anchor="middle">terrain guess</text>
+<rect x="640" y="95" width="150" height="50" rx="6" fill="#fff" stroke="#999"/><text x="715" y="125" text-anchor="middle">entities</text>
+<rect x="640" y="170" width="150" height="50" rx="6" fill="#fff" stroke="#999"/><text x="715" y="200" text-anchor="middle">fates (dice)</text>
+<text x="880" y="40" text-anchor="middle" font-size="12.5" fill="#1f6fd1">keep the most</text><text x="880" y="56" text-anchor="middle" font-size="12.5" fill="#1f6fd1">confident cells</text>
+<path d="M160 60H205M160 180H205M350 60Q395 60 398 102M350 180Q395 180 398 138M416 120H445M590 110L635 50M590 120H635M590 130L635 190M790 45H860" stroke="#1d1d1b" fill="none" marker-end="url(#ar)"/>
+<path d="M880 70V235H85V215" stroke="#1f6fd1" stroke-width="2" stroke-dasharray="6 4" fill="none" marker-end="url(#ar)"/>
+<text x="480" y="232" text-anchor="middle" fill="#1f6fd1" font-weight="700">loop: 4 passes per frame (after pass 4 nothing is unknown)</text>
+</g></svg></div>
+<p class="sub">Only terrain is diffused. Dinos and the player still come from the fate head with dice, exactly as now, so the test is about terrain alone.</p>
+
+<h2 data-wb="sec-train">4. Training: hide cells and fill them in</h2>
+<p>Take a real next frame, hide a random share of its terrain, and score the net <b>only on the hidden cells</b>. Shares are mostly large (cosine), since early passes start almost fully hidden. Drag to see what the net is given at different shares (real held-out frame):</p>
+<div class="card" data-wb="train-hide">
+  hidden share <input type="range" id="hide" min="0" max="100" value="60"> <span class="k" id="hidev">60%</span>
+  <div class="row" style="margin-top:8px"><div class="fig" data-wb="train-input"><canvas id="hidecv"></canvas>what the net sees (grey = unknown)</div><div class="fig" data-wb="train-answer"><canvas id="ansv"></canvas>the answer it's scored on</div></div>
+</div>
+
+<h2 data-wb="sec-real">5. Real data: where the current model is unsure</h2>
+<p>Held-out moments where the view scrolls. Wrong cells are outlined in white. Where the one-shot model is unsure (dark in the confidence map) is where argmax smears and where passes should help most.</p>
+<div class="card" data-wb="real">
+  <div style="margin-bottom:6px"><button class="btn" onclick="mom(-1)">◀</button> <button class="btn" onclick="mom(1)">▶</button> moment <span class="k" id="momi"></span> <span class="sub" id="momnote"></span></div>
+  <div class="row" id="realrow"></div>
+  <div class="legend" id="legend" style="margin-top:6px"></div>
+</div>
+
+<h2 data-wb="sec-passes">6. Pass by pass (diffusion model)</h2>
+<div class="card" data-wb="passes">
+  <div id="passwait" class="sub">Appears once the H16 model is trained (s3-diffuse).</div>
+  <div id="passui" style="display:none">
+    <div style="margin-bottom:6px">pass <span id="passbtns"></span> <span class="sub">same moment as above</span></div>
+    <div class="row" id="passrow"></div>
+  </div>
+</div>
+
+<h2 data-wb="sec-plan">7. The test</h2>
+<ul>
+<li><b>H16:</b> warm start from best-so-far, 3 epochs (~20–25 min on the Mac, so <b>no Colab needed</b>). Compare to <code>s3-unet-more2</code>, which got the same 3 extra epochs without diffusion. Watch max_share (~68 → real 59), static, continuity, dino numbers unchanged.</li>
+<li><b>H17:</b> score the same model at 1, 2, 4 and 8 passes, and time it. 4 passes ≈ 64 ms in the browser against a 70 ms tick.</li>
+<li>If max_share doesn't move after a solid run: H16 🔴, on to the transformer.</li>
+</ul>
+<div class="card" data-wb="result"><b>Result (2026-10-21): H16 🔴.</b> More passes → fewer stray cells (0.24% → 0.08%; real 0.02%) but <b>more</b> smear (biggest terrain 69% → 73%; one-shot 68%, real 59%). Sampling instead of argmax: 77%. The passes make neighbours agree, but on the majority. Smear builds up over many frames of the net reading its own output, which a per-frame sampler doesn't touch. Full table in the journal.</div>
+</main>
+<script src="grid.js"></script>
+<script>
+const N = 45, GREY = "#9a9a9a";
+function terrainCanvas(cv, terr, opts = {}) {
+  const cell = opts.cell || 6; cv.width = cv.height = N * cell;
+  const c = cv.getContext("2d");
+  for (let i = 0; i < N * N; i++) {
+    const v = +terr[i];
+    c.fillStyle = v === 8 ? GREY : TERRAIN_COLORS[v];
+    c.fillRect((i % N) * cell, Math.floor(i / N) * cell, cell, cell);
+  }
+  if (opts.wrong) { c.strokeStyle = "#fff"; for (const i of opts.wrong) c.strokeRect((i % N) * cell + .5, Math.floor(i / N) * cell + .5, cell - 1, cell - 1); }
+  if (opts.fresh) { c.strokeStyle = "#ffe14d"; c.lineWidth = 1.5; for (const i of opts.fresh) c.strokeRect((i % N) * cell + 1, Math.floor(i / N) * cell + 1, cell - 2, cell - 2); }
+}
+function confCanvas(cv, conf, cell = 6) {
+  cv.width = cv.height = N * cell; const c = cv.getContext("2d");
+  for (let i = 0; i < N * N; i++) { const v = +conf[i] / 9; c.fillStyle = `rgb(${Math.round(30 + 225 * v)},${Math.round(30 + 200 * v)},${Math.round(60 + 140 * v)})`; c.fillRect((i % N) * cell, Math.floor(i / N) * cell, cell, cell); }
+}
+function fig(label, wb) { const d = document.createElement("div"); d.className = "fig"; if (wb) d.dataset.wb = wb; const cv = document.createElement("canvas"); d.append(cv, label); return [d, cv]; }
+
+// ---- toy (section 1): a 16x16 strip, each cell 52% dirt / 48% grass; real terrain = blobs
+const T = 16, rnd = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(7);
+const blob = [...Array(T * T)].map((_, i) => { const x = i % T, y = Math.floor(i / T); return (Math.sin(x * .55) + Math.cos(y * .5 + x * .2)) > 0 ? 3 : 2; });
+const toyNoise = [...Array(T * T)].map(() => rnd()), toyDice = [...Array(T * T)].map(() => rnd());
+let toyStep = 0;
+function toyDraft(steps) {  // cartoon of diffusion: a cell's odds lean toward already-fixed neighbours
+  let d = Array(T * T).fill(8);
+  const order = [...Array(T * T).keys()].sort((a, b) => toyNoise[a] - toyNoise[b]);
+  for (let s = 0; s < steps; s++) {
+    const keep = Math.round(T * T * (1 - Math.cos(Math.PI / 2 * (s + 1) / 4)));
+    const nd = d.slice(); let have = d.filter(v => v !== 8).length;
+    const seedFrom = s === 0;
+    for (const i of order) {
+      if (have >= keep) break; if (d[i] !== 8) continue;
+      const x = i % T, y = Math.floor(i / T); let g = 0, n = 0;
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[2,0],[0,2],[-2,0],[0,-2]]) { const j = (y + dy) * T + x + dx; if (x + dx >= 0 && x + dx < T && y + dy >= 0 && y + dy < T && d[j] !== 8) { n++; g += d[j] === 3; } }
+      const roll = toyDice[i] < .52 ? 2 : 3;
+      nd[i] = (seedFrom || n === 0) ? roll : (g / n > .5 ? 3 : g / n < .5 ? 2 : roll); have++;
+    }
+    d = nd;
+  }
+  return d;
+}
+function toyCanvas(cv, vals) { const cell = 9; cv.width = cv.height = T * cell; const c = cv.getContext("2d"); vals.forEach((v, i) => { c.fillStyle = typeof v === "string" ? v : v === 8 ? GREY : TERRAIN_COLORS[v]; c.fillRect((i % T) * cell, Math.floor(i / T) * cell, cell, cell); }); }
+function drawToy() {
+  const row = document.getElementById("toyrow"); row.innerHTML = "";
+  const parts = [["odds per cell: 52% dirt / 48% grass", "toy-odds", Array(T * T).fill("#6f7d38")],
+    ["argmax: all dirt (smear)", "toy-argmax", Array(T * T).fill(2)],
+    ["sample each cell: speckle", "toy-sample", toyNoise.map(r => r < .52 ? 2 : 3)],
+    ["diffusion after pass " + toyStep, "toy-diffusion", toyDraft(toyStep)],
+    ["the real terrain", "toy-real", blob]];
+  for (const [label, wb, vals] of parts) { const [d, cv] = fig(label, wb); toyCanvas(cv, vals); row.append(d); }
+  document.getElementById("toyp").textContent = toyStep;
+  document.getElementById("toynote").textContent = ["all unknown (grey)", "a few cells fixed by rolling the odds", "the next cells lean toward their fixed neighbours", "blobs grow", "done: blobs, not smear or speckle (not the same blobs as reality, which is fine)"][toyStep];
+}
+function toyPass(d) { toyStep = Math.max(0, Math.min(4, toyStep + d)); drawToy(); }
+drawToy();
+
+// ---- real data (sections 4-6)
+let D = null, mi = 0, pi = 3;
+function mom(d) { mi = (mi + d + D.moments.length) % D.moments.length; drawReal(); }
+function drawReal() {
+  const m = D.moments[mi], real = m.real[0];
+  const wrong = [...m.oneshot].flatMap((v, i) => v !== real[i] ? [i] : []);
+  document.getElementById("momi").textContent = `${mi + 1} / ${D.moments.length}`;
+  const unsure = [...m.oneshot_conf].filter(c => +c < 6).length;
+  document.getElementById("momnote").textContent = `${m.episode} tick ${m.tick}, key ${["none","▲","▶","▼","◀"][m.key]}: ${wrong.length} wrong cells, ${unsure} cells under 60% sure`;
+  const row = document.getElementById("realrow"); row.innerHTML = "";
+  let [d, cv] = fig("last real frame", "real-last"); drawGrid(cv, m.last[0], m.last[1], { cell: 6 }); row.append(d);
+  [d, cv] = fig("real next frame", "real-next"); drawGrid(cv, m.real[0], m.real[1], { cell: 6 }); row.append(d);
+  [d, cv] = fig("one-shot guess (white = wrong)", "oneshot-guess"); terrainCanvas(cv, m.oneshot, { wrong }); row.append(d);
+  [d, cv] = fig("one-shot confidence (dark = unsure)", "oneshot-conf"); confCanvas(cv, m.oneshot_conf); row.append(d);
+  drawHide(); drawPasses();
+}
+function drawHide() {
+  const m = D.moments[mi], s = +document.getElementById("hide").value / 100;
+  document.getElementById("hidev").textContent = Math.round(s * 100) + "%";
+  let r = 12345; const rr = () => (r = (r * 16807) % 2147483647) / 2147483647;
+  const draft = [...m.real[0]].map(v => rr() < s ? "8" : v).join("");
+  terrainCanvas(document.getElementById("hidecv"), draft); terrainCanvas(document.getElementById("ansv"), m.real[0]);
+}
+function drawPasses() {
+  const m = D.moments[mi]; if (!m.passes) return;
+  document.getElementById("passwait").style.display = "none"; document.getElementById("passui").style.display = "";
+  document.getElementById("passbtns").innerHTML = m.passes.map((_, i) => `<button class="btn${i === pi ? " on" : ""}" onclick="pi=${i};drawPasses()">${i + 1}</button>`).join(" ");
+  const p = m.passes[pi], prev = pi ? m.passes[pi - 1].draft : "8".repeat(N * N), real = m.real[0];
+  const fresh = [...p.draft].flatMap((v, i) => v !== "8" && prev[i] === "8" ? [i] : []);
+  const wrong = [...p.draft].flatMap((v, i) => v !== "8" && v !== real[i] ? [i] : []);
+  const left = [...p.draft].filter(v => v === "8").length;
+  const row = document.getElementById("passrow"); row.innerHTML = "";
+  let [d, cv] = fig(`draft after pass ${pi + 1}: ${left} unknown (yellow = fixed this pass)`, "pass-draft"); terrainCanvas(cv, p.draft, { fresh }); row.append(d);
+  [d, cv] = fig("confidence this pass", "pass-conf"); confCanvas(cv, p.conf); row.append(d);
+  [d, cv] = fig(`wrong so far: ${wrong.length} (one-shot: ${[...m.oneshot].filter((v, i) => v !== real[i]).length})`, "pass-wrong"); terrainCanvas(cv, p.draft, { wrong }); row.append(d);
+}
+document.getElementById("hide").oninput = drawHide;
+document.getElementById("legend").innerHTML = legendHTML() + '<span class="sw"><i style="background:#9a9a9a"></i>unknown</span>';
+fetch("diffusion.json?" + Date.now()).then(r => r.json()).then(j => { D = j; drawReal(); });
+whiteboard_state = () => ({ moment: mi, pass: pi, toyPass: toyStep });
+</script>
+<script src="whiteboard.js"></script>
+<script>if (window.whiteboard) whiteboard.pageState = whiteboard_state;</script>
+</body></html>

@@ -673,3 +673,75 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 - **Negative result:** no continuity gain, worse smear in rollouts, 3.6× slower.
 - Likely why: with real frames as training input, remembering terrain only pays off on the single edge row revealed when scrolling back (~45 of 2,025 cells, on some ticks), so the loss barely rewards it. One epoch is also short for a new memory.
 - Scorecards are now pushed to W&B as `score/*`.
+
+## 2026-10-21 — Architecture chapter, part 1: masked diffusion for terrain (H16, H17)
+
+**Why diffusion first:** smearing is the most visible flaw. Each terrain cell is picked alone, so when the net is unsure the most common type wins everywhere. Masked diffusion builds the frame in a few passes, and each pass sees the cells already fixed. The transformer (long history for continuity) comes second, because H15 suggested the training, not the architecture, is what doesn't reward remembering.
+
+**What was built (`--diffuse`):**
+- The U-Net stays. It gets one extra input: a draft of the next frame's terrain, where some cells are known and the rest are "unknown". A new layer mixes in the draft and starts at zero, so the warm start begins exactly as best-so-far.
+- **Training:** hide a random share of the real next terrain (cosine: mostly large shares) and score only the hidden cells.
+- **Generating:** start all unknown; 4 passes; each pass keeps the most confident guesses (cosine schedule) and leaves the rest unknown. Lava and its neighbours are still rolled with dice.
+- Only terrain is diffused. Dinos and the player keep their fates and dice.
+- Scorecard: `--steps N` sets the passes; one-step terrain uses the full decode.
+- Whiteboard: new **Diffusion (H16)** tab with a toy (argmax smear vs sampling speckle vs passes), masked vs noise, the U-Net diagram, hide-and-fill on a real frame, the one-shot model's confidence on real held-out moments, and pass-by-pass views.
+- **Colab:** not needed. A 3-epoch run takes about 24 minutes on the Mac.
+
+**Seen on real data before training:** on a scroll moment, the one-shot model's 163 wrong cells are a missed scroll (coastlines off by one), and it was *confident* about them. Diffusion targets cells the model is unsure of, so it probably can't fix mistimed scrolls.
+
+**Results** (s3-diffuse-last vs control s3-unet-more2-last, same 3 extra epochs from best-so-far; 24 rollout games; real: static 0.02, max_share ~59, continuity ~95):
+
+| decode | static % | max_share % | continuity | terrain_changed | CPU ms/frame |
+|---|---|---|---|---|---|
+| control (one-shot) | 0.100 | 68 | 70.2 | 88.1 | 5.0 |
+| diffusion, 1 pass | 0.237 | 69 | 68.0 | 87.8 | 4.9 |
+| 2 passes | 0.161 | 71 | 69.5 | 87.6 | 9.9 |
+| **4 passes** | 0.101 | 70 | 67.9 | 86.1 | 26.3 |
+| 8 passes | 0.075 | 73 | 67.3 | 85.3 | 40.8 |
+| 4 passes, sampled T=0.5 | 0.084 | 73 | 70.2 | 86.1 | ~45* |
+| 4 passes, sampled T=1.0 | 0.249 | 77 | 71.5 | 86.1 | ~45* |
+
+*two scorecards ran at once; timings inflated. Dino and player numbers are unchanged throughout (as designed).
+
+- **More passes make terrain cleaner but more smeared.** Stray cells fall steadily with passes (0.24 → 0.08%), so later cells do agree with earlier ones. But they agree on the majority, and the biggest terrain type grows (69 → 73%).
+- **Sampling instead of argmax (the MaskGIT way) makes it worse**, not better: 77% at T=1. The extra randomness compounds over 150 ticks.
+- On the 8 real one-step moments, diffusion is a little better on the big scroll errors (163 → 151, 113 → 96 wrong cells) but these are mostly missed scrolls either way.
+- **Reading:** the smear isn't one frame's indecision, which is what diffusion fixes. It builds up over the rollout as the net is fed its own slightly-off frames (the same "exposure" problem H8 tried and failed to fix with fake damage). A per-frame sampler can't fix an accumulation problem.
+- **H16 🔴 in this form. H17:** passes cost time linearly (~5 ms each on CPU); 4 passes would fit the browser's budget, but there's no gain to pay for.
+
+## 2026-10-22 — Does diffusion have potential? (90-minute session)
+
+**1. Random cell order (decode only, MaskGIT's fix).** Noise on the ranking of which cells are fixed first, fading to 0 by the last pass; values stay argmax.
+- `max_share` (the single worst frame) proved too noisy to judge by: strength 1 gave 76, strength 4 gave 68. **New scorecard measure `share_mean`:** the biggest terrain type averaged over all rollout frames, with `share_mean_real` for the real game over the same ticks.
+
+| model / decode | share_mean (real 40.2) | max_share | static % | continuity | terrain_changed |
+|---|---|---|---|---|---|
+| control s3-unet-more2 (one-shot) | 42.1 | 68 | 0.100 | 70.2 | 88.1 |
+| s3-diffuse, 4 passes | 43.6 | 70 | 0.101 | 67.9 | 86.1 |
+| s3-diffuse, 4 passes, random order 4 | **41.6** | 68 | **0.077** | 70.4 | 87.4 |
+
+- **On average the smear is mild:** 42% vs 40% real. The 68–70% frames are rare spikes.
+- Random order turns diffusion from slightly worse to slightly better than the control on smear and stray cells, at equal continuity. The gaps are small (about 1 point), close to the noise.
+
+**2. GameNGen-style damage with a damage-level input.** In training, 70% of examples get their input frames damaged (speckle/smear on up to 15% of cells; older-frame dinos dropped, capped at 30%), and the net is told the damage level (a new zero-initialized input). Rollouts run at level 0. Two runs, 1 epoch each from best-so-far, in parallel: with diffusion (s3-diffuse-gng) and without (s3-gng).
+- First tried 3 epochs each, but in parallel a quarter epoch took 8 minutes (~95 min total), more than the machine's 90 minutes; restarted at 1 epoch.
+
+**Results (24 rollout games; real: share_mean 40.2, static 0.02, continuity ~95, dino moves ~40%):**
+
+| model / decode | share_mean | static % | continuity | dino_moves_pred | dino_move_right | CPU ms |
+|---|---|---|---|---|---|---|
+| control s3-unet-more2 | 42.1 | 0.100 | 70.2 | 30.6 | 48.9 | ~5 |
+| s3-diffuse + random order | **41.6** | 0.077 | 70.4 | 31.2 | 49.5 | ~26 |
+| s3-gng (damage + level, one-shot, 1 ep) | 42.7 | 0.054 | 68.6 | 27.5 | 43.7 | ~5 |
+| s3-diffuse-gng, 4 passes | 44.6 | 0.069 | 70.4 | 27.4 | 43.5 | ~26 |
+| s3-diffuse-gng + random order | 42.8 | **0.046** | **71.6** | 27.3 | 43.6 | ~26 |
+
+(CPU ms for diffusion is ~5 ms × passes; the scorecard timings were inflated by parallel runs.)
+
+- **Damage with a level input halves stray cells** (0.10 → 0.05), the first training change to move `static` (H8 in its simple form didn't). It doesn't touch the smear, and it **costs the dinos** (moves predicted 31 → 27%, right move 49 → 44%). Dropping dinos from older frames probably taught it that dinos flicker; next time damage terrain only.
+- **Diffusion on top adds ~1 point** of continuity and a little less static, within the noise of 24 games.
+- **Random order is required** for diffusion here: without it, the passes drift toward the majority terrain (44.6 vs 42.8).
+
+**Verdict:** at this scale, diffusion gives at most ~1–2 points on smear/static/continuity, for 4× the compute per frame. The big gaps (continuity 70 vs 95, dino moves 30 vs 40%) don't move at all. The smear we were chasing is mostly rare spikes (42% vs 40% on average). Diffusion isn't broken; it targets a problem we mostly don't have. GameNGen's damage idea is the useful takeaway, without diffusion.
+
+Not tried: rollouts at a small damage level (GameNGen used one), damage on terrain only, longer training.

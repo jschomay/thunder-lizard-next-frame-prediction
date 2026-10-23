@@ -26,7 +26,7 @@ import torch
 
 from tlfp.baselines import predict as rule_predict
 from tlfp.data import find_episodes, split_by_episode, KEYS
-from tlfp.model import build_model, combine
+from tlfp.model import build_model, combine, diffuse_terrain
 from tlfp.moves import MOVES, DIE, find_scroll, kind
 
 SPAWN = "revealed"  # where new dinos may appear in fates mode: ring | revealed | none (--spawn)
@@ -81,12 +81,20 @@ def _model_step(model, history: list[np.ndarray], key: int, device, sample, gen:
 @torch.no_grad()
 def fates_step(model, history, key, device, gen, draw):
     ctx = torch.from_numpy(np.stack(history[-model.k:]).astype(np.int64))[None].to(device)
-    t_logits, e_parts, f_logits = model.forward_parts(ctx, torch.tensor([key], device=device))
-    e_logits = combine(*e_parts) if model.split_entity else e_parts
     last = history[-1]
-    terrain = t_logits.argmax(1)[0].cpu().numpy().astype(np.uint8)
     m = next_to_lava(last[0]) | (last[0] == 6)
-    terrain[m] = draw(t_logits)[m]
+    keys = torch.tensor([key], device=device)
+    if getattr(model, "diffuse", False):  # H16: terrain in a few passes; lava cells still rolled
+        # temp 0: argmax except lava (as one-shot); temp > 0: every cell is drawn at that temperature
+        temp = getattr(model, "diffuse_temp", 0.0)
+        draw_where = torch.ones(1, 45, 45, dtype=torch.bool) if temp else torch.from_numpy(m)[None]
+        t, _, (t_logits, e_parts, f_logits) = diffuse_terrain(model, ctx, keys, sample=draw_where, gen=gen, temp=temp or 1.0)
+        terrain = t[0].cpu().numpy().astype(np.uint8)
+    else:
+        t_logits, e_parts, f_logits = model.forward_parts(ctx, keys)
+        terrain = t_logits.argmax(1)[0].cpu().numpy().astype(np.uint8)
+        terrain[m] = draw(t_logits)[m]
+    e_logits = combine(*e_parts) if model.split_entity else e_parts
     sy, sx = find_scroll(last[0], terrain)
     fate = f_logits.argmax(1)[0].cpu().numpy()
     # dinos: draw the fate from its probabilities (dino moves are partly random in the game, and

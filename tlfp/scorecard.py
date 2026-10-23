@@ -14,7 +14,9 @@ One step (the net sees real frames):
   chase_near          predicted toward/away/stay for dinos within 6 cells (real ~27/13/60)
 Rollouts (8 games x 150 ticks, the app's step: dice for dinos, edge spawns, lava dice):
   static              isolated terrain cells (real ~0.02%)
-  max_share           biggest single terrain type, worst frame (real ~59%)
+  max_share           biggest single terrain type, worst frame (real ~59%; one frame, so noisy)
+  share_mean          biggest single terrain type, averaged over frames (steadier smear measure);
+                      share_mean_real is the same for the real game over the same ticks
   dinos               dinos per frame (real ~1.5)
   scroll_when_key     ticks with a key held where the view scrolled (real ~44%)
   continuity          walk away and come back (backtrack games): share of terrain where the model's
@@ -33,7 +35,7 @@ import numpy as np
 import torch
 
 from tlfp.data import find_episodes, split_by_episode
-from tlfp.model import build_model
+from tlfp.model import build_model, diffuse_terrain
 from tlfp.moves import MOVES, find_scroll, kind
 from tlfp.rollout import model_step, reset_memory
 from tlfp.train import Frames
@@ -85,8 +87,12 @@ def one_step(model, data, dev) -> dict:
     yy, xx = np.mgrid[0:45, 0:45]
     for i in range(0, len(data), 256):
         ctx, keys, tgt, fate = data.batch(torch.arange(i, min(i + 256, len(data)), device=dev))
-        t, _, f = model.forward_parts(ctx, keys)
-        pt, pf = t.argmax(1), f.argmax(1)
+        if getattr(model, "diffuse", False):  # H16: the full few-pass decode, argmax everywhere
+            pt, _, (t, _, f) = diffuse_terrain(model, ctx, keys)
+            pf = f.argmax(1)
+        else:
+            t, _, f = model.forward_parts(ctx, keys)
+            pt, pf = t.argmax(1), f.argmax(1)
         ch = ctx[:, -1, 0] != tgt[:, 0]
         c["tc"] += ((pt == tgt[:, 0]) & ch).sum().item(); c["tn"] += ch.sum().item()
         last, fate, pf = ctx[:, -1].cpu().numpy(), fate.cpu().numpy(), pf.cpu().numpy()
@@ -129,7 +135,7 @@ def one_step(model, data, dev) -> dict:
 def rollouts(model, val, n_eps=8, ticks=150) -> dict:  # n_eps: --eps
     gen = torch.Generator().manual_seed(0)
     torch.manual_seed(0)
-    iso, share, dinos, sc = [], [], [], []
+    iso, share, dinos, sc, real_share = [], [], [], [], []
     for ep in [e for e in val if len(e.actions) > 60][:n_eps]:
         obs, acts = np.asarray(ep.obs), np.asarray(ep.actions)
         s = 20
@@ -145,8 +151,10 @@ def rollouts(model, val, n_eps=8, ticks=150) -> dict:  # n_eps: --eps
             if acts[t]:
                 sc.append(find_scroll(hist[-1][0], tr) != (0, 0))
             hist.append(nxt)
+            real_share.append(np.bincount(obs[t + 1][0].ravel(), minlength=8).max() / 2025)
     return {"static": round(100 * float(np.mean(iso)), 3), "max_share": round(100 * float(np.max(share))),
-            "dinos": round(float(np.mean(dinos)), 2), "scroll_when_key": round(100 * float(np.mean(sc)))}
+            "share_mean": round(100 * float(np.mean(share)), 1),
+            "share_mean_real": round(100 * float(np.mean(real_share)), 1), "dinos": round(float(np.mean(dinos)), 2), "scroll_when_key": round(100 * float(np.mean(sc)))}
 
 
 def main():
@@ -154,6 +162,9 @@ def main():
     p.add_argument("checkpoint")
     p.add_argument("--name", default=None)
     p.add_argument("--eps", type=int, default=8, help="rollout games (8 is quick but noisy)")
+    p.add_argument("--steps", type=int, default=4, help="diffusion passes per frame (H16/H17)")
+    p.add_argument("--temp", type=float, default=0.0, help="diffusion: draw every terrain cell at this temperature (0 = argmax)")
+    p.add_argument("--order-noise", type=float, default=0.0, help="diffusion: randomness in which cells are fixed first (MaskGIT)")
     p.add_argument("--no-wandb", action="store_true")
     args = p.parse_args()
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -162,17 +173,19 @@ def main():
     model = build_model(c).eval()
     model.load_state_dict(ck["state"])
     model.dino_weight = c.get("dino_weight", 1.0)
+    model.steps, model.diffuse_temp, model.order_noise = args.steps, args.temp, args.order_noise
     _, val = split_by_episode(find_episodes(*VAL_DATA), 0.1, seed=0)
     out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True), dev)
     model = model.cpu()
     out |= rollouts(model, val, n_eps=args.eps)
     out["continuity"] = continuity(model)
     x, k = torch.zeros(1, model.k, 2, 45, 45, dtype=torch.long), torch.tensor([0])
+    frame = (lambda: diffuse_terrain(model, x, k)) if getattr(model, "diffuse", False) else (lambda: model.forward_parts(x, k))
     for _ in range(5):
-        model.forward_parts(x, k)
+        frame()
     t0 = time.time()
     for _ in range(30):
-        model.forward_parts(x, k)
+        frame()
     out["cpu_ms"] = round((time.time() - t0) / 30 * 1000, 1)
     name = args.name or Path(args.checkpoint).stem
     Path("scorecards").mkdir(exist_ok=True)
