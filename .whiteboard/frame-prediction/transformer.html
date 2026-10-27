@@ -1,0 +1,141 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transformer memory (H18)</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a65;--line:#d9d6ce;--card:#fff;--acc:#2f6f4f;--code:#f1efe9;--tf:#b4521f}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 80px}
+nav a{margin-right:14px;color:var(--acc)}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:30px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:10px 0}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.fig{text-align:center;font-size:13px;color:var(--mut)}
+.fig canvas{display:block;margin:0 auto 4px;max-width:100%;border:1px solid var(--line)}
+code{font-family:ui-monospace,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;font-size:13px}
+.btn{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--fg);background:var(--card);border-radius:4px;cursor:pointer}
+table{border-collapse:collapse;font-size:13.5px;width:100%}td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+svg{max-width:100%;height:auto;display:block}svg text{font-family:system-ui,sans-serif}
+.k{font-weight:700}
+#strip{display:flex;flex-wrap:wrap;gap:4px}#strip .fig{font-size:11px;cursor:pointer}#strip canvas{border:2px solid transparent}#strip .on canvas{border-color:var(--tf)}#strip .seen canvas{outline:2px dashed #2f6f4f}
+</style></head>
+<body><main>
+<nav><a href="index.html">Plan</a><a href="how.html">How it works</a><a href="concepts.html">Model concepts</a><a href="inside.html">Inside the model</a><a href="memory.html">Memory (H15)</a><a href="diffusion.html">Diffusion (H16)</a><a href="transformer.html"><b>Transformer (H18)</b></a><a href="data.html">Data</a><a href="predictions.html">Predictions</a><a href="play.html">Play in the net</a><a href="precedents.html">Precedents</a></nav>
+<h1>A transformer that remembers (H18)</h1>
+<p class="sub">How attention works, why it might fix continuity (70 vs 95 in the real game), how it plugs into our CNN, and where it runs.</p>
+
+<h2 data-wb="sec-attention">1. Tokens and attention, on a real game</h2>
+<p>A transformer works on a list of <b>tokens</b>. Ours: each frame cut into 9×9 <b>patches</b> (25 per frame), each tagged with its screen position and its age. In every layer, each token asks <i>"which other tokens matter to me?"</i>, scores all of them, and takes a weighted mix of the best. The scoring is learned.</p>
+<p>Below is a real backtracking game: the player walked away and came back. <b>Click a patch in "now"</b>, then pick an old frame from the history strip. The old frame is shaded by how much each patch <i>looks like</i> the one you clicked. That's the job attention has to learn: find the old patch showing the same place, even though the view has moved. <span class="sub">(The shading is a simple terrain-mix comparison standing in for the trained net.)</span></p>
+<div class="card" data-wb="attention-demo">
+  <div style="margin-bottom:6px"><button class="btn" onclick="mom(-1)">◀</button> <button class="btn" onclick="mom(1)">▶</button> game <span class="k" id="momi"></span> <span class="sub" id="momnote"></span></div>
+  <div class="row">
+    <div class="fig" data-wb="now-frame"><canvas id="nowcv"></canvas>now (click a patch)</div>
+    <div class="fig" data-wb="old-frame"><canvas id="oldcv"></canvas><span id="oldlabel"></span></div>
+    <div class="fig" data-wb="next-frame"><canvas id="nextcv"></canvas>what really comes next</div>
+  </div>
+  <div style="margin:8px 0 4px" class="sub">History the memory reads (23 frames: every tick for 8, then every 8th back to 128). Dashed = closest to when this place was last seen.</div>
+  <div id="strip" data-wb="history-strip"></div>
+</div>
+
+<h2 data-wb="sec-compare">2. How it differs from our CNN</h2>
+<table data-wb="cnn-vs-tf">
+<tr><th></th><th>CNN / U-Net (ours)</th><th>Transformer</th></tr>
+<tr><td>What a cell sees per layer</td><td>Its 3×3 neighbours</td><td>Any token, anywhere</td></tr>
+<tr><td>Far away</td><td>Needs many layers (the U-Net shrinks the grid)</td><td>One step</td></tr>
+<tr><td>Time</td><td>A fixed window of 4 frames</td><td>A sequence; can look at any old frame</td></tr>
+<tr><td>Built-in assumptions</td><td>"Nearby matters", "same rule everywhere"</td><td>Almost none, so it needs more data</td></tr>
+<tr><td>Cost</td><td>Grows with cells</td><td>Grows with tokens <b>squared</b></td></tr>
+</table>
+<p><b>Why it might help:</b> to redraw a place you come back to, the net needs a frame from 20–120 ticks ago. The CNN never sees it; the GRU (H15) had to keep it in memory and didn't. Here the old frames are simply <i>in the input</i>.<br>
+<b>Why it might not:</b> most cells can be predicted from the last frame, so the net can ignore the old ones and still score well. That's H15's lesson, and why H19 adds extra loss weight on the row or column a scroll reveals, the only cells where memory helps.</p>
+
+<h2 data-wb="sec-hybrid">3. Our hybrid: the CNN stays, a memory branch is added</h2>
+<div class="card" data-wb="hybrid-diagram"><svg viewBox="0 0 960 270">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#1d1d1b"/></marker></defs>
+<g font-size="14">
+<rect x="10" y="20" width="160" height="56" rx="6" fill="#eee" stroke="#999"/><text x="90" y="44" text-anchor="middle">last 4 frames</text><text x="90" y="64" text-anchor="middle">+ key</text>
+<rect x="220" y="20" width="160" height="56" rx="6" fill="#fff" stroke="#999"/><text x="300" y="52" text-anchor="middle">CNN + U-Net (as now)</text>
+<rect x="10" y="150" width="160" height="70" rx="6" fill="#f7e3d6" stroke="#b4521f"/><text x="90" y="176" text-anchor="middle" fill="#b4521f" font-weight="700">23 history frames</text><text x="90" y="198" text-anchor="middle" fill="#b4521f" font-size="12">ages 0–7, 8, 16 … 128</text>
+<rect x="200" y="150" width="130" height="70" rx="6" fill="#fff" stroke="#b4521f"/><text x="265" y="178" text-anchor="middle" fill="#b4521f">small CNN stem</text><text x="265" y="198" text-anchor="middle" fill="#b4521f" font-size="12">+ 9×9 patches</text>
+<rect x="360" y="150" width="190" height="70" rx="6" fill="#fff" stroke="#b4521f"/><text x="455" y="172" text-anchor="middle" fill="#b4521f">575 tokens + 25 "next"</text><text x="455" y="190" text-anchor="middle" fill="#b4521f">tokens (+ key)</text><text x="455" y="208" text-anchor="middle" fill="#b4521f" font-size="12">tagged: screen position, age</text>
+<rect x="580" y="150" width="150" height="70" rx="6" fill="#fff" stroke="#b4521f"/><text x="655" y="178" text-anchor="middle" fill="#b4521f" font-weight="700">transformer</text><text x="655" y="198" text-anchor="middle" fill="#b4521f" font-size="12">4 layers, starts at 0</text>
+<circle cx="680" cy="48" r="16" fill="#fff" stroke="#999"/><text x="680" y="54" text-anchor="middle" font-size="20">+</text>
+<rect x="740" y="20" width="200" height="56" rx="6" fill="#fff" stroke="#999"/><text x="840" y="44" text-anchor="middle">terrain, entities, fates</text><text x="840" y="64" text-anchor="middle" font-size="12">(same heads as now)</text>
+<path d="M170 48H215M380 48H660M698 48H735M170 185H195M330 185H355M550 185H575M655 150Q660 100 676 66" stroke="#1d1d1b" fill="none" marker-end="url(#ar)"/>
+<text x="480" y="252" text-anchor="middle" fill="#6b6a65" font-size="13">The "next" tokens read the transformer's answer; it's turned back into per-cell features and added to the CNN's.</text>
+</g></svg></div>
+<p>Because the branch starts at zero, training begins exactly at our best model and only adds what memory contributes. This shape (a CNN for local detail, a transformer across time) is a common pattern in world models such as Genie.</p>
+
+<h2 data-wb="sec-coords">4. Which position does a patch get?</h2>
+<table data-wb="coords">
+<tr><th></th><th>How</th><th>For</th><th>Against</th></tr>
+<tr><td><b>A. Screen position</b> (chosen)</td><td>"column 30 of the screen"</td><td>Pure frame prediction; no help from code</td><td>After you walk 10 cells, the same lake is at column 20, so the net must match places by how they look (section 1)</td></tr>
+<tr><td>B. World position</td><td>screen position + total scroll so far</td><td>Same place = same tag; remembering is an easy lookup</td><td>The total scroll would be measured by code from the model's own frames; one mistake shifts every later tag. Close to the line from H14</td></tr>
+<tr><td>C. Model's own scroll</td><td>the net predicts the scroll; code adds it up</td><td>The position comes from the model</td><td>Still bookkeeping in code</td></tr>
+</table>
+<p class="sub">If the trained model's attention shows it can't find old places, we revisit B or C with evidence.</p>
+
+<h2 data-wb="sec-terms">5. Terms you'll hear</h2>
+<ul>
+<li><b>World model:</b> predicts how a world changes given actions. Our CNN already is one (like GameNGen and Genie); the transformer may make it a better one.</li>
+<li><b>Encoder-decoder:</b> one stack reads the input, a second writes the output (the original 2017 transformer, for translation). <b>Decoder-only:</b> one stack, one sequence, predict what comes next (GPT). Ours is closest to an encoder with "next frame" query tokens: it reads the whole history at once and writes one frame.</li>
+<li><b>Causal masking:</b> tokens can't look at the future. Not needed here, since the history is all past.</li>
+</ul>
+
+<h2 data-wb="sec-where">6. Where it runs</h2>
+<table data-wb="speed">
+<tr><th>Setup</th><th>Per epoch (170k examples)</th><th></th></tr>
+<tr><td>CNN on the Mac (for comparison)</td><td>~14 min</td><td></td></tr>
+<tr><td>Mac, 5×5 patches</td><td>~30 h</td><td>out of memory</td></tr>
+<tr><td>Mac, 9×9 patches</td><td>~2 h</td><td>froze the Mac</td></tr>
+<tr><td><b>Colab T4 (free), 9×9</b></td><td><b>~93 min</b> (measured)</td><td>running: 2 epochs ≈ 3 h</td></tr>
+<tr><td>Browser (WebGPU), branch alone</td><td colspan="2">9×9: 48 ms per tick (fits the 70 ms tick with the CNN); 5×5: 145 ms (doesn't)</td></tr>
+</table>
+
+<h2 data-wb="sec-test">7. The test</h2>
+<ul>
+<li><b>H18:</b> continuity well above the CNN's ~70 (target ≥80), nothing else worse, browser ≤70 ms per tick. Compared with a CNN trained on the same data and weighting.</li>
+<li><b>H19:</b> the extra weight on revealed cells is needed for memory to be learned.</li>
+<li><b>After training:</b> this page will show what newly revealed patches <i>actually</i> attend to. If they look at the frame where the place was last seen, the memory works.</li>
+</ul>
+<div class="card" data-wb="results" id="results">Training on Colab. Results will go here.</div>
+</main>
+<script src="grid.js"></script>
+<script>
+const N = 45, P = 9, G = 5;
+let D = null, mi = 0, age = null, sel = 12;
+function hist(terr, py, px) { const h = new Array(8).fill(0); for (let y = 0; y < P; y++) for (let x = 0; x < P; x++) h[+terr[(py * P + y) * N + px * P + x]]++; return h; }
+function sim(a, b) { let d = 0, na = 0, nb = 0; for (let i = 0; i < 8; i++) { d += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; } return d / Math.sqrt(na * nb || 1); }
+function grid(cv, f, cell) { drawGrid(cv, f[0], f[1], { cell }); const c = cv.getContext("2d"); c.strokeStyle = "rgba(255,255,255,.35)"; for (let i = 1; i < G; i++) { c.beginPath(); c.moveTo(i * P * cell, 0); c.lineTo(i * P * cell, N * cell); c.moveTo(0, i * P * cell); c.lineTo(N * cell, i * P * cell); c.stroke(); } }
+function mom(d) { mi = (mi + d + D.moments.length) % D.moments.length; age = null; draw(); }
+function draw() {
+  const m = D.moments[mi], cell = 7;
+  if (age === null) age = D.ages.reduce((b, a) => Math.abs(m.now - a - m.seen_at) < Math.abs(m.now - b - m.seen_at) ? a : b);
+  document.getElementById("momi").textContent = `${mi + 1} / ${D.moments.length}`;
+  document.getElementById("momnote").textContent = `${m.episode}: now = tick ${m.now}; this view was last seen at tick ${m.seen_at} (${m.now - m.seen_at} ticks ago)`;
+  const now = document.getElementById("nowcv"); grid(now, m.frames["0"], cell);
+  const c = now.getContext("2d"); c.strokeStyle = "#ffe14d"; c.lineWidth = 3; c.strokeRect((sel % G) * P * cell + 1.5, Math.floor(sel / G) * P * cell + 1.5, P * cell - 3, P * cell - 3);
+  const old = document.getElementById("oldcv"); grid(old, m.frames[String(age)], cell);
+  const target = hist(m.frames["0"][0], Math.floor(sel / G), sel % G), oc = old.getContext("2d");
+  const scores = [...Array(G * G).keys()].map(j => sim(target, hist(m.frames[String(age)][0], Math.floor(j / G), j % G)));
+  const best = scores.indexOf(Math.max(...scores));
+  scores.forEach((s, j) => { oc.fillStyle = `rgba(0,0,0,${(0.75 * (1 - s)).toFixed(2)})`; oc.fillRect((j % G) * P * cell, Math.floor(j / G) * P * cell, P * cell, P * cell); });
+  oc.strokeStyle = "#ffe14d"; oc.lineWidth = 3; oc.strokeRect((best % G) * P * cell + 1.5, Math.floor(best / G) * P * cell + 1.5, P * cell - 3, P * cell - 3);
+  document.getElementById("oldlabel").textContent = `${age} ticks ago (tick ${m.now - age}): bright = looks alike, yellow = best match`;
+  grid(document.getElementById("nextcv"), m.next, cell);
+  const strip = document.getElementById("strip"); strip.innerHTML = "";
+  const seenAge = D.ages.reduce((b, a) => Math.abs(m.now - a - m.seen_at) < Math.abs(m.now - b - m.seen_at) ? a : b);
+  for (const a of D.ages) {
+    const d = document.createElement("div"); d.className = "fig" + (a === age ? " on" : "") + (a === seenAge ? " seen" : "");
+    const cv = document.createElement("canvas"); drawGrid(cv, m.frames[String(a)][0], m.frames[String(a)][1], { cell: 2 });
+    d.append(cv, a === 0 ? "now" : `−${a}`); d.onclick = () => { age = a; draw(); }; strip.append(d);
+  }
+}
+document.getElementById("nowcv").onclick = e => { const r = e.target.getBoundingClientRect(); const x = Math.floor((e.clientX - r.left) / r.width * G), y = Math.floor((e.clientY - r.top) / r.height * G); sel = y * G + x; draw(); };
+fetch("transformer.json?" + Date.now()).then(r => r.json()).then(j => { D = j; draw(); });
+var whiteboard_state = () => ({ game: mi, age, patch: sel });
+</script>
+<script src="whiteboard.js"></script>
+<script>if (window.whiteboard) whiteboard.pageState = whiteboard_state;</script>
+</body></html>
