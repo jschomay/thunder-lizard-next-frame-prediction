@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from tlfp.data import find_episodes, split_by_episode
 from tlfp.metrics import add, frame_metrics, summarize
 from tlfp.model import MASK, build_model, split_ids
-from tlfp.moves import episode_fates
+from tlfp.moves import episode_fates, find_scroll
 
 
 def episode_fates_cached(ep) -> np.ndarray:
@@ -27,14 +27,24 @@ def episode_fates_cached(ep) -> np.ndarray:
         np.save(f, episode_fates(np.asarray(ep.obs)))
     return np.load(f)
 
+def episode_origin_cached(ep) -> np.ndarray:
+    """[T+1, 2] the view's origin per frame: the sum of the scrolls so far (find_scroll), cached"""
+    f = ep.path / "origin.npy"
+    if not f.exists():
+        t = np.asarray(ep.obs)[:, 0]
+        steps = [find_scroll(t[i], t[i + 1]) for i in range(len(t) - 1)]
+        np.save(f, np.concatenate([[[0, 0]], np.cumsum(steps, 0)]).astype(np.int32))
+    return np.load(f)
+
+
 print = __import__("functools").partial(print, flush=True)  # live logs when redirected to a file
 
 
 class Frames:
     """All episodes in one in-memory uint8 tensor, with window indices that never cross episodes."""
 
-    def __init__(self, episodes, k: int, device, fates: bool = False, offsets=None):
-        obs, acts, idx, fts, eps = [], [], [], [], []
+    def __init__(self, episodes, k: int, device, fates: bool = False, offsets=None, world: bool = False):
+        obs, acts, idx, fts, eps, origin = [], [], [], [], [], []
         offset = 0
         for ep in episodes:
             o = np.asarray(ep.obs)
@@ -43,6 +53,8 @@ class Frames:
             if fates:
                 fts.append(np.append(episode_fates_cached(ep), np.full((1, 45, 45), -1, np.int8), 0))
             eps += [len(obs)] * len(ep)  # which episode each row belongs to (H15 sequences)
+            if world:
+                origin.append(episode_origin_cached(ep))
             for t in range(len(ep)):
                 # frame indices for the k-window ending at t, padded with the episode's first frame
                 ages = offsets if offsets is not None else range(k - 1, -1, -1)  # oldest first
@@ -55,6 +67,9 @@ class Frames:
         self.k = k
         self.ep = torch.tensor(eps, device=device)
         self.fates = torch.from_numpy(np.concatenate(fts)).to(device) if fates else None  # [F, 45, 45]
+        # H18 world positions: each frame's view origin in its game's world (accumulated scroll)
+        self.origin = torch.from_numpy(np.concatenate(origin)).to(device) if world else None
+        self.batch_rel = None
 
     def __len__(self):
         return len(self.idx)
@@ -69,6 +84,8 @@ class Frames:
         context = self.obs[ix[:, :-1]].long()       # [B, k, 2, 45, 45]
         target = self.obs[ix[:, -1]].long()         # [B, 2, 45, 45]
         keys = self.keys[ix[:, -2]]                 # key at the last context frame
+        if self.origin is not None:  # each context frame's origin relative to the last context frame
+            self.batch_rel = (self.origin[ix[:, :-1]] - self.origin[ix[:, -2:-1]]).long()
         if self.fates is not None:
             return context, keys, target, self.fates[ix[:, -2]].long()
         return context, keys, target
@@ -105,6 +122,7 @@ def evaluate(model, data: Frames, batch_size=64) -> dict[str, float]:
     for i in range(0, len(data), batch_size):
         rows = torch.arange(i, min(i + batch_size, len(data)), device=data.obs.device)
         context, keys, target = data.batch(rows)[:3]
+        model.rel = data.batch_rel
         pred = model.predict(context, keys)
         add(totals, frame_metrics(context[:, -1].cpu().numpy(), pred.cpu().numpy(), target.cpu().numpy()))
     model.train()
@@ -198,6 +216,7 @@ def main():
     p.add_argument("--noise-level", action="store_true", help="tell the net how damaged its input is (GameNGen)")
     p.add_argument("--memory", type=int, default=0, help="transformer memory reaching this many ticks back (H18)")
     p.add_argument("--revealed-weight", type=float, default=1.0, help="loss weight for cells a scroll reveals (H19)")
+    p.add_argument("--world", action="store_true", help="H18 option B: tag patches with world positions (scroll measured from frames)")
     p.add_argument("--stride", type=int, default=8, help="H18: older frames every N ticks")
     p.add_argument("--mem-d", type=int, default=256)
     p.add_argument("--mem-layers", type=int, default=4)
@@ -224,9 +243,10 @@ def main():
     train_eps, val_eps = split_by_episode(find_episodes(*args.data), 0.1, seed=0)
     if args.memory:  # H18: last 8 frames, then every --stride back to --memory ticks
         args.memory = {"offsets": sorted(set(range(8)) | set(range(args.stride, args.memory + 1, args.stride))),
-                       "d": args.mem_d, "layers": args.mem_layers, "patch": args.mem_patch}
+                       "d": args.mem_d, "layers": args.mem_layers, "patch": args.mem_patch,
+                       "world": args.world}
     model = build_model(vars(args)).to(device)
-    train, val = (Frames(e, args.k, device, args.fates, model.offsets) for e in (train_eps, val_eps))
+    train, val = (Frames(e, args.k, device, args.fates, model.offsets, world=bool(args.memory and args.world)) for e in (train_eps, val_eps))
     if args.init:
         # copy every weight whose name and shape match; new parts (split heads, U-Net branch) start fresh
         old, own = torch.load(args.init, map_location=device)["state"], model.state_dict()
@@ -263,8 +283,9 @@ def main():
     amp = args.amp and device == "cuda"
     amp_dtype = torch.bfloat16 if amp and torch.cuda.is_bf16_supported() else torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
-    save_last = lambda m: torch.save({"config": vars(args), "state": model.state_dict(), "opt": opt.state_dict(),
-                                      "step": step, "val": m}, ckpt.with_name(ckpt.stem + "-last.pt"))
+    save_last = lambda m, finished=False: torch.save({"config": vars(args), "state": model.state_dict(), "opt": opt.state_dict(),
+                                                      "step": step, "val": m, "finished": finished},
+                                                     ckpt.with_name(ckpt.stem + "-last.pt"))
     if args.resume:  # continue a run that was cut off (free Colab sessions disconnect)
         r = torch.load(args.resume, map_location=device)
         model.load_state_dict(r["state"]); opt.load_state_dict(r["opt"]); step = r["step"]
@@ -281,6 +302,7 @@ def main():
             if not args.recurrent:
                 context, keys, target, *fate = train.batch(order[b * args.batch:(b + 1) * args.batch])
                 fate = fate[0] if fate else None
+                model.rel = train.batch_rel
             if args.corrupt and not args.recurrent:
                 clean_last = context[:, -1]
                 context, level = corrupt(context, args.corrupt, args.corrupt_max, with_rate=True)
@@ -345,7 +367,7 @@ def main():
                 save_last(m)
     # also keep the final weights: "best" is picked by dynamic accuracy, which counts every wrong
     # dino guess, so it can prefer an earlier model that mostly ignores dinos
-    save_last(evaluate(model, val))
+    save_last(evaluate(model, val), finished=not args.max_steps)
     if run:
         run.finish()
 

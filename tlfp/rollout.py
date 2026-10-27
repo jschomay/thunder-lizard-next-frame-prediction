@@ -42,8 +42,25 @@ def next_to_lava(terrain: np.ndarray) -> np.ndarray:
     return adj & ~lava
 
 
+def world_rel(model, history) -> torch.Tensor:
+    """H18 world positions in a rollout: each picked frame's origin relative to the newest, from the
+    scrolls measured between the model's own consecutive frames (as the app does for glyphs)"""
+    cache = model.__dict__.setdefault("scroll_cache", {})
+    n = len(history)
+    cum = [np.zeros(2, int)]  # origin of history[-1 - a] relative to history[-1], a = 0, 1, ...
+    for a in range(1, min(n, max(model.offsets) + 1)):
+        newer, older = history[n - a], history[n - a - 1]
+        k = (id(older), id(newer))
+        if k not in cache:
+            cache[k] = np.array(find_scroll(older[0], newer[0]))
+        cum.append(cum[-1] - cache[k])
+    return torch.tensor(np.stack([cum[min(a, len(cum) - 1)] for a in model.offsets]))[None]
+
+
 def model_step(model, history, key, device, sample, gen):
     """one tick; a recurrent model (H15) keeps a separate memory per mode, cleared by reset_memory"""
+    if getattr(model, "memory", None) is not None and model.memory.world:
+        model.rel = world_rel(model, history).to(device)
     if not getattr(model, "recurrent", False):
         return _model_step(model, history, key, device, sample, gen)
     states = model.__dict__.setdefault("mode_states", {})
@@ -55,6 +72,7 @@ def model_step(model, history, key, device, sample, gen):
 
 def reset_memory(model):
     model.__dict__["mode_states"] = {}
+    model.__dict__["scroll_cache"] = {}
 
 
 @torch.no_grad()

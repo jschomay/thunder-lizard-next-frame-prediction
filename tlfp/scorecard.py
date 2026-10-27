@@ -88,6 +88,7 @@ def one_step(model, data, dev) -> dict:
     bs = 32 if getattr(model, "memory", None) is not None else 256  # transformer: keep memory use small
     for i in range(0, len(data), bs):
         ctx, keys, tgt, fate = data.batch(torch.arange(i, min(i + bs, len(data)), device=dev))
+        model.rel = data.batch_rel
         if getattr(model, "diffuse", False):  # H16: the full few-pass decode, argmax everywhere
             pt, _, (t, _, f) = diffuse_terrain(model, ctx, keys)
             pf = f.argmax(1)
@@ -177,7 +178,8 @@ def main():
     model.dino_weight = c.get("dino_weight", 1.0)
     model.steps, model.diffuse_temp, model.order_noise = args.steps, args.temp, args.order_noise
     _, val = split_by_episode(find_episodes(*VAL_DATA), 0.1, seed=0)
-    out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True, offsets=model.offsets), dev)
+    out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True, offsets=model.offsets,
+                                        world=bool(model.memory is not None and model.memory.world)), dev)
     model = model.cpu()
     out |= rollouts(model, val, n_eps=args.eps)
     out["continuity"] = continuity(model)

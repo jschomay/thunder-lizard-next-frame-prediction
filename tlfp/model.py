@@ -38,6 +38,7 @@ from tlfp.data import N_ENTITY, N_TERRAIN
 N_KEYS = 5
 N_KIND, N_DIR, N_LEVEL = 4, 4, 5  # kind: 0 empty, 1 player, 2 dino, 3 skeleton
 MASK = N_TERRAIN  # "unknown" terrain in a diffusion draft
+WORLD_PAD = 200  # H18 world positions: how far (cells) a remembered patch may be from the current screen
 
 
 def split_ids(e: torch.Tensor):
@@ -115,8 +116,13 @@ class MemoryBranch(nn.Module):
     """H18: patches of every history frame -> transformer -> per-cell features for the next frame."""
 
     def __init__(self, n_frames: int, width: int, d: int = 256, layers: int = 4, heads: int = 8, patch: int = 5,
-                 stem: int = 32):
+                 stem: int = 32, world: bool = False):
         super().__init__()
+        # world (option B): tag each patch with where it is *now*, i.e. its screen position shifted by
+        # how far the view has scrolled since that frame (rel), so the same place gets the same tag
+        self.world = world
+        if world:
+            self.wrow, self.wcol = nn.Embedding(2 * WORLD_PAD + 45, d), nn.Embedding(2 * WORLD_PAD + 45, d)
         self.p, self.n = patch, (45 // patch) ** 2
         self.stem = nn.Sequential(nn.Conv2d(N_TERRAIN + N_ENTITY, stem, 3, padding=1), nn.ReLU(),
                                   nn.Conv2d(stem, stem, 3, padding=1))
@@ -139,13 +145,31 @@ class MemoryBranch(nn.Module):
         B, p, g = len(y), self.p, 45 // self.p
         return y.reshape(B, g, g, -1, p, p).permute(0, 3, 1, 4, 2, 5).reshape(B, -1, 45, 45)
 
-    def forward(self, context, keys):
+    def world_pos(self, rel):
+        """rel: int [B, T, 2], each frame's screen origin in the current frame's screen coordinates
+        -> [B, T, n, d] position tags of its patches (patch centres, shifted by rel)"""
+        g = 45 // self.p
+        c = torch.arange(g, device=rel.device) * self.p + self.p // 2
+        rows = (c[:, None].expand(g, g).reshape(-1) + rel[..., :1]).clamp(-WORLD_PAD, 44 + WORLD_PAD) + WORLD_PAD
+        cols = (c[None, :].expand(g, g).reshape(-1) + rel[..., 1:]).clamp(-WORLD_PAD, 44 + WORLD_PAD) + WORLD_PAD
+        return self.wrow(rows) + self.wcol(cols)
+
+    def tokens(self, context, keys, rel=None):
+        """all tokens: history patches then the next-frame queries, [B, (T+1)*n, d]"""
         B, T = context.shape[:2]
         oh = torch.cat([F.one_hot(context[:, :, 0], N_TERRAIN), F.one_hot(context[:, :, 1], N_ENTITY)], -1)
         f = self.stem(oh.permute(0, 1, 4, 2, 3).reshape(B * T, -1, 45, 45).float())
-        tok = self.embed(self.patches(f)).reshape(B, T, self.n, -1) + self.pos + self.age[:T, None]
-        q = (self.query + self.pos + self.age[T] + self.key(keys)[:, None]).reshape(B, 1, self.n, -1)
-        x = self.tf(torch.cat([tok, q], 1).flatten(1, 2))[:, -self.n:]   # read the query tokens
+        if self.world:
+            rel = torch.zeros(B, T, 2, dtype=torch.long, device=context.device) if rel is None else rel
+            pos, qpos = self.world_pos(rel), self.world_pos(torch.zeros_like(rel[:, :1]))[:, 0]
+        else:
+            pos, qpos = self.pos, self.pos
+        tok = self.embed(self.patches(f)).reshape(B, T, self.n, -1) + pos + self.age[:T, None]
+        q = (self.query + qpos + self.age[T] + self.key(keys)[:, None]).reshape(B, 1, self.n, -1)
+        return torch.cat([tok, q], 1).flatten(1, 2)
+
+    def forward(self, context, keys, rel=None):
+        x = self.tf(self.tokens(context, keys, rel))[:, -self.n:]   # read the query tokens
         return self.unpatch(self.out(x))
 
 
@@ -240,7 +264,7 @@ class CNN(nn.Module):
         draft (diffuse only): int [B, 45, 45] next-frame terrain, MASK where unknown; None = all unknown"""
         h = self.body(encode_input(context, keys))
         if self.memory is not None:
-            h = h + self.memory(full, keys)
+            h = h + self.memory(full, keys, getattr(self, "rel", None))  # rel: set by the caller (world mode)
         if self.noise_level:  # level: [B] damage level of the input frames; None = rollout_level
             if level is None:
                 level = torch.full((len(h),), self.rollout_level, device=h.device)
