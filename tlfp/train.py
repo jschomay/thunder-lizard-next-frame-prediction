@@ -33,7 +33,7 @@ print = __import__("functools").partial(print, flush=True)  # live logs when red
 class Frames:
     """All episodes in one in-memory uint8 tensor, with window indices that never cross episodes."""
 
-    def __init__(self, episodes, k: int, device, fates: bool = False):
+    def __init__(self, episodes, k: int, device, fates: bool = False, offsets=None):
         obs, acts, idx, fts, eps = [], [], [], [], []
         offset = 0
         for ep in episodes:
@@ -45,7 +45,8 @@ class Frames:
             eps += [len(obs)] * len(ep)  # which episode each row belongs to (H15 sequences)
             for t in range(len(ep)):
                 # frame indices for the k-window ending at t, padded with the episode's first frame
-                idx.append([offset + max(0, s) for s in range(t - k + 1, t + 1)] + [offset + t + 1])
+                ages = offsets if offsets is not None else range(k - 1, -1, -1)  # oldest first
+                idx.append([offset + max(0, t - a) for a in ages] + [offset + t + 1])
             offset += len(o)
         self.obs = torch.from_numpy(np.concatenate(obs)).to(device)              # [F, 2, 45, 45] uint8
         self.idx = torch.tensor(idx, device=device)                              # [N, k+1]
@@ -98,7 +99,7 @@ def corrupt(context: torch.Tensor, p: float, max_rate: float = 0.03, with_rate: 
     return (ctx, rate.flatten() / max_rate) if with_rate else ctx
 
 
-def evaluate(model, data: Frames, batch_size=256) -> dict[str, float]:
+def evaluate(model, data: Frames, batch_size=64) -> dict[str, float]:
     model.eval()
     totals: dict[str, int] = {}
     for i in range(0, len(data), batch_size):
@@ -108,6 +109,24 @@ def evaluate(model, data: Frames, batch_size=256) -> dict[str, float]:
         add(totals, frame_metrics(context[:, -1].cpu().numpy(), pred.cpu().numpy(), target.cpu().numpy()))
     model.train()
     return summarize(totals)
+
+
+def revealed_cells(last: torch.Tensor, nxt: torch.Tensor) -> torch.Tensor:
+    """bool [B,45,45]: the row/column a scroll brings into view (H19). The scroll (dy, dx) is the shift
+    where nxt[y, x] best matches last[y+dy, x+dx] (as tlfp.moves.find_scroll); none -> nothing revealed"""
+    B = len(last)
+    errs = [(nxt[:, 1:-1, 1:-1] != last[:, 1:-1, 1:-1]).float().mean((1, 2))]
+    moves = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+    for dy, dx in moves:
+        shifted = torch.roll(last, (-dy, -dx), (1, 2))  # shifted[y, x] = last[y+dy, x+dx]
+        errs.append((nxt[:, 1:-1, 1:-1] != shifted[:, 1:-1, 1:-1]).float().mean((1, 2)))
+    best = torch.stack(errs, 1).argmin(1)
+    out = torch.zeros_like(last, dtype=torch.bool)
+    for i, (dy, dx) in enumerate(moves, 1):
+        m = best == i
+        if dy: out[m, 44 if dy > 0 else 0] = True
+        if dx: out[m, :, 44 if dx > 0 else 0] = True
+    return out
 
 
 def step_loss(model, args, context, keys, target, fate, clean_last=None, level=None):
@@ -128,6 +147,10 @@ def step_loss(model, args, context, keys, target, fate, clean_last=None, level=N
         has = lambda e: (e >= 1) & (e <= 40)
         d = (has(context[:, -1, 1]) | has(target[:, 1])).float()
         w = w * (1 + (args.dino_weight - 1) * d[:, None])
+    if args.revealed_weight != 1:  # H19: memory only helps on cells that scroll into view
+        last_t = (clean_last if clean_last is not None else context[:, -1])[:, 0]
+        w = w.clone()
+        w[:, 0] = w[:, 0] * (1 + (args.revealed_weight - 1) * revealed_cells(last_t, target[:, 0]).float())
     ce_t = F.cross_entropy(t_logits, target[:, 0], reduction="none")
     wt = w[:, 0] * hide if hide is not None else w[:, 0]  # diffusion: score only the hidden cells
     loss_t = (ce_t * wt).sum() / wt.sum().clamp(min=1)
@@ -173,6 +196,13 @@ def main():
     p.add_argument("--corrupt", type=float, default=0.0, help="share of examples with damaged input frames (H8)")
     p.add_argument("--corrupt-max", type=float, default=0.03, help="max share of damaged cells (H8)")
     p.add_argument("--noise-level", action="store_true", help="tell the net how damaged its input is (GameNGen)")
+    p.add_argument("--memory", type=int, default=0, help="transformer memory reaching this many ticks back (H18)")
+    p.add_argument("--revealed-weight", type=float, default=1.0, help="loss weight for cells a scroll reveals (H19)")
+    p.add_argument("--stride", type=int, default=8, help="H18: older frames every N ticks")
+    p.add_argument("--mem-d", type=int, default=256)
+    p.add_argument("--mem-layers", type=int, default=4)
+    p.add_argument("--mem-patch", type=int, default=9, help="H18: patch size (9 -> 25 tokens/frame; 5 is too slow in the browser)")
+    p.add_argument("--skip-start-eval", action="store_true")
     p.add_argument("--recurrent", action="store_true", help="ConvGRU memory across ticks (H15)")
     p.add_argument("--seq", type=int, default=8, help="ticks per training sequence with --recurrent")
     p.add_argument("--chunk", type=int, default=0, help="truncated backprop: chunk length within --seq (0 = whole)")
@@ -182,14 +212,21 @@ def main():
     p.add_argument("--unet", action="store_true", help="add a zero-initialized shrink-and-grow branch")
     p.add_argument("--init", default=None, help="start from a checkpoint's weights (warm start, H4)")
     p.add_argument("--no-wandb", action="store_true")
+    p.add_argument("--out-dir", default="checkpoints", help="where checkpoints go (Colab: a Google Drive folder)")
+    p.add_argument("--device", default=None, help="force cuda / mps / cpu")
+    p.add_argument("--resume", default=None, help="continue from a -last checkpoint (weights, optimizer, step)")
+    p.add_argument("--amp", action="store_true", help="CUDA only: bfloat16 mixed precision (faster)")
     p.add_argument("--name", default=None)
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = args.device or ("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     train_eps, val_eps = split_by_episode(find_episodes(*args.data), 0.1, seed=0)
-    train, val = Frames(train_eps, args.k, device, args.fates), Frames(val_eps, args.k, device, args.fates)
+    if args.memory:  # H18: last 8 frames, then every --stride back to --memory ticks
+        args.memory = {"offsets": sorted(set(range(8)) | set(range(args.stride, args.memory + 1, args.stride))),
+                       "d": args.mem_d, "layers": args.mem_layers, "patch": args.mem_patch}
     model = build_model(vars(args)).to(device)
+    train, val = (Frames(e, args.k, device, args.fates, model.offsets) for e in (train_eps, val_eps))
     if args.init:
         # copy every weight whose name and shape match; new parts (split heads, U-Net branch) start fresh
         old, own = torch.load(args.init, map_location=device)["state"], model.state_dict()
@@ -204,7 +241,8 @@ def main():
     run = None
     if not args.no_wandb:
         import wandb
-        run = wandb.init(project="thunder-lizard-frame-prediction", name=args.name,
+        prev = torch.load(args.resume, map_location="cpu")["config"].get("wandb_id") if args.resume else None
+        run = wandb.init(project="thunder-lizard-frame-prediction", name=args.name, id=prev, resume="allow" if prev else None,
                          config={**vars(args), "params": n_params, "train_examples": len(train)})
         args.wandb_id = run.id  # saved with checkpoints, so the scorecard can attach its numbers
 
@@ -217,18 +255,28 @@ def main():
     lr_at = lambda s: args.lr * (s / warmup_steps if s < warmup_steps else
                                  0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (s - warmup_steps) / (total_steps - warmup_steps))))
     eval_every = max(1, steps_per_epoch // args.evals_per_epoch)
-    ckpt = Path("checkpoints") / f"{args.name or 'run'}.pt"
-    ckpt.parent.mkdir(exist_ok=True)
+    ckpt = Path(args.out_dir) / f"{args.name or 'run'}.pt"
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
     best = -1.0
     step, t0 = 0, time.time()
-    if args.init:  # score the starting point, so a warm start that gets worse is obvious
+    # mixed precision (CUDA): bfloat16 where supported (A100), else float16 with loss scaling (T4)
+    amp = args.amp and device == "cuda"
+    amp_dtype = torch.bfloat16 if amp and torch.cuda.is_bf16_supported() else torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
+    save_last = lambda m: torch.save({"config": vars(args), "state": model.state_dict(), "opt": opt.state_dict(),
+                                      "step": step, "val": m}, ckpt.with_name(ckpt.stem + "-last.pt"))
+    if args.resume:  # continue a run that was cut off (free Colab sessions disconnect)
+        r = torch.load(args.resume, map_location=device)
+        model.load_state_dict(r["state"]); opt.load_state_dict(r["opt"]); step = r["step"]
+        print(f"resumed {args.resume} at step {step} (epoch {step / steps_per_epoch:.2f})")
+    if args.init and not args.skip_start_eval and not args.resume:  # score the starting point, so a warm start that gets worse is obvious
         m = evaluate(model, val)
         print(f"start        val dynamic {m['dynamic_acc']:.2%}  changed {m['changed_acc']:.2%}  exact {m['exact_frame_acc']:.2%}")
         if run:
             run.log({f"val/{k}": v for k, v in m.items()}, step=0)
-    for epoch in range(args.epochs):
+    for epoch in range(step // steps_per_epoch, args.epochs):
         order = torch.randperm(len(starts) if args.recurrent else len(train), device=device)
-        for b in range(steps_per_epoch):
+        for b in range(step % steps_per_epoch if epoch == step // steps_per_epoch else 0, steps_per_epoch):
             if not args.recurrent:
                 context, keys, target, *fate = train.batch(order[b * args.batch:(b + 1) * args.batch])
                 fate = fate[0] if fate else None
@@ -257,17 +305,23 @@ def main():
                         opt.step()
                     chunk_losses.append(loss.item())
             else:
-                loss, loss_t, loss_e, loss_f = step_loss(model, args, context, keys, target, fate,
-                                                         clean_last if args.corrupt else None,
-                                                         level if args.corrupt else None)
+                with torch.autocast("cuda", dtype=amp_dtype, enabled=amp):
+                    loss, loss_t, loss_e, loss_f = step_loss(model, args, context, keys, target, fate,
+                                                             clean_last if args.corrupt else None,
+                                                             level if args.corrupt else None)
             opt.zero_grad()
-            loss.backward()
+            scaler.scale(loss).backward()
             if args.clip:
+                scaler.unscale_(opt)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            opt.step()
+            scaler.step(opt)
+            scaler.update()
             if args.recurrent:
                 model.carry, model.state = False, None
             step += 1
+            if b == 20 or (args.max_steps and step == args.max_steps):
+                print(f"speed: {(time.time() - t0) / 21:.2f} s/step (incl. setup) -> roughly "
+                      f"{(time.time() - t0) / 21 * steps_per_epoch / 60:.0f} min/epoch")
             if args.max_steps and step >= args.max_steps:
                 break
             if run and step % 20 == 0:
@@ -286,10 +340,11 @@ def main():
                     print(f"  saved best -> {ckpt}")
                 if run:
                     run.log({f"val/{k}": v for k, v in m.items()} | {"val/best_dynamic_acc": best}, step=step)
+                # also keep the latest weights at every eval, so a dropped Colab session loses little
+                save_last(m)
     # also keep the final weights: "best" is picked by dynamic accuracy, which counts every wrong
     # dino guess, so it can prefer an earlier model that mostly ignores dinos
-    torch.save({"config": vars(args), "state": model.state_dict(), "step": step, "val": evaluate(model, val)},
-               ckpt.with_name(ckpt.stem + "-last.pt"))
+    save_last(evaluate(model, val))
     if run:
         run.finish()
 

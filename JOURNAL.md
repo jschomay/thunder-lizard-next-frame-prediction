@@ -745,3 +745,12 @@ Both runs: warm start from best-so-far, 3 more epochs on the stage-3 data (19–
 **Verdict:** at this scale, diffusion gives at most ~1–2 points on smear/static/continuity, for 4× the compute per frame. The big gaps (continuity 70 vs 95, dino moves 30 vs 40%) don't move at all. The smear we were chasing is mostly rare spikes (42% vs 40% on average). Diffusion isn't broken; it targets a problem we mostly don't have. GameNGen's damage idea is the useful takeaway, without diffusion.
 
 Not tried: rollouts at a small damage level (GameNGen used one), damage on terrain only, longer training.
+
+## 2026-10-27 — Transformer memory (H18, H19): build, speed checks, Colab
+
+- **Design (hybrid):** the CNN + U-Net stays and still reads the last 4 frames. A new **memory branch** reads a strided history (ages 0–7, then 8, 16 … 128: 23 frames). Each frame goes through a small CNN stem, is cut into patches, and becomes tokens tagged with screen position and age. 25 "next frame" query tokens (plus the key) attend to all of them in a 4-layer transformer (d=256), and the result is added to the CNN's features. Its output starts at zero, so the warm start begins as best-so-far. Screen positions only (option A); no world coordinates.
+- **H19 weighting:** `--revealed-weight` multiplies the loss on the row/column a scroll reveals; detection matches `find_scroll` on 1,398/1,398 ticks.
+- **Speed on the Mac (MPS):** 5×5 patches (81 tokens/frame): 10 s/step at batch 16 (~15 h/epoch), out of memory at 32. 9×9 patches (25 tokens/frame): ~1 h/epoch. A 5-step test then **made the Mac unresponsive** (attention on MPS uses ~28 GB of shared memory). Rule from now on: transformer runs go to Colab.
+- **Speed in the browser (WebGPU, untrained branch alone):** 9×9 patches 48 ms per tick (~64 ms with the CNN: fits the 70 ms tick); 5×5 patches 145 ms (doesn't). → 9×9 patches.
+- **Colab (free T4):** training now supports CUDA, fp16 mixed precision with loss scaling, `--out-dir` (Google Drive), saving `-last` with optimizer state at every evaluation, and `--resume`. Notebook: `colab/train_transformer.ipynb`. Data + starting checkpoint: a 16.5 MB zip (1.15 GB unpacked; the grids compress ~70×).
+- Replaced `F.fold/unfold` with reshapes (same result, exports to ONNX).

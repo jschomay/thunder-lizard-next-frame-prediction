@@ -12,6 +12,11 @@ Options for stage 3:
   unet: a shrink-and-grow branch that sees the whole screen at 1/4 size, added to the
       full-size features. Its last layer starts at zero, so a warm-started model begins
       exactly as the plain CNN and learns to use the branch.
+  memory (H18): a transformer branch that looks back over a long, strided history (e.g. the last
+      8 frames, then every 8th back to 128). Each old frame is cut into 5x5 patches (81 tokens per
+      frame, tagged with screen position and age); 81 "next frame" query tokens attend to all of
+      them, and the result is added to the CNN's features. Its output starts at zero, so a warm
+      start begins exactly as the CNN. The CNN still sees only the last k frames.
   diffuse (H16): masked diffusion for terrain. The net also sees a draft of the next frame's
       terrain in which some cells are known and the rest are "unknown" (MASK). Training hides a
       random share of the real next frame and scores only the hidden cells; generating starts
@@ -23,6 +28,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -76,7 +82,7 @@ def build_model(c: dict) -> "CNN":
                split_entity=c.get("split_entity", False), unet=c.get("unet", False),
                fates=c.get("fates", False), recurrent=c.get("recurrent", False),
                mem_pad=c.get("mem_pad", 0), diffuse=c.get("diffuse", False),
-               noise_level=c.get("noise_level", False))
+               noise_level=c.get("noise_level", False), memory=c.get("memory"))
 
 
 class ConvGRUCell(nn.Module):
@@ -105,13 +111,60 @@ def encode_input(context: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
     return torch.cat([frames, key], dim=1).float()
 
 
+class MemoryBranch(nn.Module):
+    """H18: patches of every history frame -> transformer -> per-cell features for the next frame."""
+
+    def __init__(self, n_frames: int, width: int, d: int = 256, layers: int = 4, heads: int = 8, patch: int = 5,
+                 stem: int = 32):
+        super().__init__()
+        self.p, self.n = patch, (45 // patch) ** 2
+        self.stem = nn.Sequential(nn.Conv2d(N_TERRAIN + N_ENTITY, stem, 3, padding=1), nn.ReLU(),
+                                  nn.Conv2d(stem, stem, 3, padding=1))
+        self.embed = nn.Linear(stem * patch * patch, d)
+        self.pos = nn.Parameter(torch.randn(self.n, d) * 0.02)        # screen position of a patch
+        self.age = nn.Parameter(torch.randn(n_frames + 1, d) * 0.02)  # which history frame (+1: the query)
+        self.key = nn.Embedding(N_KEYS, d)
+        self.query = nn.Parameter(torch.randn(self.n, d) * 0.02)      # "what goes here next frame?"
+        layer = nn.TransformerEncoderLayer(d, heads, 4 * d, dropout=0.0, batch_first=True, norm_first=True)
+        self.tf = nn.TransformerEncoder(layer, layers, enable_nested_tensor=False)
+        self.out = nn.Linear(d, width * patch * patch)
+        nn.init.zeros_(self.out.weight); nn.init.zeros_(self.out.bias)
+        self.width = width
+
+    def patches(self, x):  # [N, C, 45, 45] -> [N, 81, C*p*p] (reshapes only: exports to ONNX)
+        N, C, p, g = len(x), x.shape[1], self.p, 45 // self.p
+        return x.reshape(N, C, g, p, g, p).permute(0, 2, 4, 1, 3, 5).reshape(N, g * g, C * p * p)
+
+    def unpatch(self, y):  # [B, 81, W*p*p] -> [B, W, 45, 45]
+        B, p, g = len(y), self.p, 45 // self.p
+        return y.reshape(B, g, g, -1, p, p).permute(0, 3, 1, 4, 2, 5).reshape(B, -1, 45, 45)
+
+    def forward(self, context, keys):
+        B, T = context.shape[:2]
+        oh = torch.cat([F.one_hot(context[:, :, 0], N_TERRAIN), F.one_hot(context[:, :, 1], N_ENTITY)], -1)
+        f = self.stem(oh.permute(0, 1, 4, 2, 3).reshape(B * T, -1, 45, 45).float())
+        tok = self.embed(self.patches(f)).reshape(B, T, self.n, -1) + self.pos + self.age[:T, None]
+        q = (self.query + self.pos + self.age[T] + self.key(keys)[:, None]).reshape(B, 1, self.n, -1)
+        x = self.tf(torch.cat([tok, q], 1).flatten(1, 2))[:, -self.n:]   # read the query tokens
+        return self.unpatch(self.out(x))
+
+
+def pick_context(model, history: list) -> np.ndarray:
+    """the frames a model reads from a rollout history (oldest first); missing old frames repeat the earliest"""
+    n = len(history)
+    return np.stack([history[max(0, n - 1 - a)] for a in model.offsets])
+
+
 class CNN(nn.Module):
     def __init__(self, k: int = 2, width: int = 64, depth: int = 6, copy_prior: bool = False,
                  split_entity: bool = False, unet: bool = False, fates: bool = False,
                  recurrent: bool = False, mem_pad: int = 0, diffuse: bool = False,
-                 noise_level: bool = False):
+                 noise_level: bool = False, memory: dict | None = None):
         super().__init__()
         self.k = k
+        # frame ages the model reads, oldest first (0 = the last frame); the CNN body uses the last k
+        self.offsets = sorted(set(range(k)) | set(memory["offsets"] if memory else []), reverse=True)
+        self.memory = MemoryBranch(len(self.offsets), width, **{x: v for x, v in memory.items() if x != "offsets"}) if memory else None
         # copy prior (H10): add a learned bonus to the class each cell had in the last frame,
         # so "nothing changes" is the default and the network only has to learn changes
         self.copy_prior = copy_prior
@@ -180,9 +233,14 @@ class CNN(nn.Module):
 
     def forward_parts(self, context: torch.Tensor, keys: torch.Tensor, draft: torch.Tensor | None = None,
                       level: torch.Tensor | None = None):
+        """context: [B, len(offsets), 2, 45, 45], oldest first (= [B, k, ...] without memory)"""
+        full = context
+        context = context[:, -self.k:]
         """terrain logits, and entity logits (42) or (kind, dir, level) when split.
         draft (diffuse only): int [B, 45, 45] next-frame terrain, MASK where unknown; None = all unknown"""
         h = self.body(encode_input(context, keys))
+        if self.memory is not None:
+            h = h + self.memory(full, keys)
         if self.noise_level:  # level: [B] damage level of the input frames; None = rollout_level
             if level is None:
                 level = torch.full((len(h),), self.rollout_level, device=h.device)

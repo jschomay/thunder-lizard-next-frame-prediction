@@ -175,11 +175,11 @@ def main():
     model.dino_weight = c.get("dino_weight", 1.0)
     model.steps, model.diffuse_temp, model.order_noise = args.steps, args.temp, args.order_noise
     _, val = split_by_episode(find_episodes(*VAL_DATA), 0.1, seed=0)
-    out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True), dev)
+    out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True, offsets=model.offsets), dev)
     model = model.cpu()
     out |= rollouts(model, val, n_eps=args.eps)
     out["continuity"] = continuity(model)
-    x, k = torch.zeros(1, model.k, 2, 45, 45, dtype=torch.long), torch.tensor([0])
+    x, k = torch.zeros(1, len(model.offsets), 2, 45, 45, dtype=torch.long), torch.tensor([0])
     frame = (lambda: diffuse_terrain(model, x, k)) if getattr(model, "diffuse", False) else (lambda: model.forward_parts(x, k))
     for _ in range(5):
         frame()

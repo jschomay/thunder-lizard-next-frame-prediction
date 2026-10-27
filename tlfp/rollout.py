@@ -26,7 +26,7 @@ import torch
 
 from tlfp.baselines import predict as rule_predict
 from tlfp.data import find_episodes, split_by_episode, KEYS
-from tlfp.model import build_model, combine, diffuse_terrain
+from tlfp.model import build_model, combine, diffuse_terrain, pick_context
 from tlfp.moves import MOVES, DIE, find_scroll, kind
 
 SPAWN = "revealed"  # where new dinos may appear in fates mode: ring | revealed | none (--spawn)
@@ -60,7 +60,7 @@ def reset_memory(model):
 @torch.no_grad()
 def _model_step(model, history: list[np.ndarray], key: int, device, sample, gen: torch.Generator):
     """sample: False = argmax, True = sample every cell, "hybrid" = sample only lava and its neighbors"""
-    ctx = torch.from_numpy(np.stack(history[-model.k:]).astype(np.int64))[None].to(device)
+    ctx = torch.from_numpy(pick_context(model, history).astype(np.int64))[None].to(device)
     t_logits, e_logits = model(ctx, torch.tensor([key], device=device))
     arg = np.stack([t_logits.argmax(1)[0].cpu().numpy(), e_logits.argmax(1)[0].cpu().numpy()]).astype(np.uint8)
     if not sample:
@@ -80,7 +80,7 @@ def _model_step(model, history: list[np.ndarray], key: int, device, sample, gen:
 
 @torch.no_grad()
 def fates_step(model, history, key, device, gen, draw):
-    ctx = torch.from_numpy(np.stack(history[-model.k:]).astype(np.int64))[None].to(device)
+    ctx = torch.from_numpy(pick_context(model, history).astype(np.int64))[None].to(device)
     last = history[-1]
     m = next_to_lava(last[0]) | (last[0] == 6)
     keys = torch.tensor([key], device=device)
