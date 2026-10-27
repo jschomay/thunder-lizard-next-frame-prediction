@@ -159,6 +159,46 @@ def rollouts(model, val, n_eps=8, ticks=150) -> dict:  # n_eps: --eps
             "share_mean_real": round(100 * float(np.mean(real_share)), 1), "dinos": round(float(np.mean(dinos)), 2), "scroll_when_key": round(100 * float(np.mean(sc)))}
 
 
+def edges(t: np.ndarray) -> float:
+    """share of neighbouring cell pairs with different terrain: blobs keep edges, smear erases them"""
+    return float(((t[1:] != t[:-1]).mean() + (t[:, 1:] != t[:, :-1]).mean()) / 2)
+
+
+@torch.no_grad()
+def walk(model, val, n_eps=12, ticks=300, window=50) -> dict:
+    """the long walk: the model plays `ticks` ticks on its own with a real game's keys. Compares the
+    first and last `window` ticks with the real game over the same ticks: terrain edges (smear erases
+    them), the terrain-type mix (total variation distance from the real mix, 0 = same), stray cells."""
+    gen = torch.Generator().manual_seed(0)
+    torch.manual_seed(0)
+    early, late, real_e, real_l, mix, stray = [], [], [], [], [], []
+    for ep in [e for e in val if len(e.actions) > ticks + 25][:n_eps]:
+        obs, acts = np.asarray(ep.obs), np.asarray(ep.actions)
+        s = 20
+        reset_memory(model)
+        hist = [obs[s - i] for i in range(model.k - 1, -1, -1)]
+        frames = []
+        for t in range(s, s + ticks):
+            hist.append(model_step(model, hist, int(acts[t]), "cpu", "fates", gen))
+            frames.append(hist[-1][0])
+            if len(hist) > 200:
+                hist = hist[-140:]
+        real = [obs[t + 1][0] for t in range(s, s + ticks)]
+        early.append(np.mean([edges(f) for f in frames[:window]]))
+        late.append(np.mean([edges(f) for f in frames[-window:]]))
+        real_e.append(np.mean([edges(f) for f in real[:window]]))
+        real_l.append(np.mean([edges(f) for f in real[-window:]]))
+        hm = np.bincount(np.concatenate([f.ravel() for f in frames[-window:]]), minlength=8) / (window * 2025)
+        hr = np.bincount(np.concatenate([f.ravel() for f in real[-window:]]), minlength=8) / (window * 2025)
+        mix.append(0.5 * np.abs(hm - hr).sum())
+        stray.append(np.mean([((c := f[1:-1, 1:-1]) != f[:-2, 1:-1]) & (c != f[2:, 1:-1]) & (c != f[1:-1, :-2]) & (c != f[1:-1, 2:])
+                              for f in frames[-window:]]))
+    r = lambda x: round(100 * float(np.mean(x)), 2)
+    return {"walk_edges_early": r(early), "walk_edges_late": r(late), "walk_edges_real_early": r(real_e),
+            "walk_edges_real_late": r(real_l), "walk_mix_late": r(mix), "walk_static_late": r(stray),
+            "walk_games": len(early)}
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("checkpoint")
@@ -168,6 +208,7 @@ def main():
     p.add_argument("--temp", type=float, default=0.0, help="diffusion: draw every terrain cell at this temperature (0 = argmax)")
     p.add_argument("--order-noise", type=float, default=0.0, help="diffusion: randomness in which cells are fixed first (MaskGIT)")
     p.add_argument("--device", default=None, help="cpu for transformer models (MPS runs out of shared memory)")
+    p.add_argument("--walk-only", action="store_true", help="only the long-walk score (quick)")
     p.add_argument("--no-wandb", action="store_true")
     args = p.parse_args()
     dev = args.device or ("mps" if torch.backends.mps.is_available() else "cpu")
@@ -178,11 +219,15 @@ def main():
     model.dino_weight = c.get("dino_weight", 1.0)
     model.steps, model.diffuse_temp, model.order_noise = args.steps, args.temp, args.order_noise
     _, val = split_by_episode(find_episodes(*VAL_DATA), 0.1, seed=0)
+    if args.walk_only:
+        print(walk(model.cpu(), val))
+        return
     out = one_step(model.to(dev), Frames(val, model.k, dev, fates=True, offsets=model.offsets,
                                         world=bool(model.memory is not None and model.memory.world)), dev)
     model = model.cpu()
     out |= rollouts(model, val, n_eps=args.eps)
     out["continuity"] = continuity(model)
+    out |= walk(model, val)
     x, k = torch.zeros(1, len(model.offsets), 2, 45, 45, dtype=torch.long), torch.tensor([0])
     frame = (lambda: diffuse_terrain(model, x, k)) if getattr(model, "diffuse", False) else (lambda: model.forward_parts(x, k))
     for _ in range(5):

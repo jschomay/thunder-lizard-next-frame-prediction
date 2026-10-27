@@ -772,3 +772,25 @@ Not tried: rollouts at a small damage level (GameNGen used one), damage on terra
 - The control alone (backtrack data + revealed ×10) beat the old best on nearly everything: the data and weighting help without memory.
 - H19 isn't separated yet: both runs used the revealed weighting.
 - **H18: 🟡 small gain.** Next: look at what newly revealed patches attend to, to see whether the net finds the old view at all.
+
+**Playable builds and the world-position run (2026-10-27).**
+- Export and app now handle memory models: the app keeps the last 129 frames with each frame's view origin, feeds the 24 the memory reads (one-hot, built in JS), and for world mode their origins relative to now. Transformer: ~52 ms per tick on WebGPU, full game speed.
+- **Jeff's play-test:** the new CNN and the screen-position transformer: "neither have meaningful improvements".
+- **World positions (option B, `s3-tf-world`; A100, 2 epochs):** one-step validation jumped (dynamic 85.7 vs 80.7 for screen positions; terrain where it changed 93.4 vs 90.5). Scorecard: **continuity 77.8** (screen 73.9, CNN 71.8), terrain_changed 92.8, smear 40.6, static 0.116, scroll_when_key **36** (worse), dinos 1.66.
+- **Jeff's play-test:** "no continuity, smears a lot and makes my machine struggle" (the machine was also running my CPU scorecard at the time, so ticks took 77–96 ms).
+- **Likely why numbers and feel disagree:** training tags come from real frames, so the scroll is always right; in play it's measured from the model's own frames, one wrong measurement shifts every later tag, and the model trusts the tags, so it copies the wrong old patches (smear). The continuity test is short and starts from real frames, so it may not show this. The app also gives the 4 seed frames the same origin. Not verified.
+- **Lesson (H7 again):** a large one-step gain and a better continuity score didn't survive contact with play.
+
+**Last two runs (A100), scored on 24 games:**
+
+| | CNN (new) | tf screen, 2 ep | tf **no revealed weight** | tf **5 epochs** | tf world | real |
+|---|---|---|---|---|---|---|
+| continuity | 71.8 | 73.9 | 73.9 | **78.9** | 77.8 | ~95 |
+| share_mean | 41.2 | 40.3 | 40.9 | 40.5 | 40.6 | 40.2 |
+| static % | **0.082** | 0.109 | 0.130 | 0.100 | 0.116 | 0.02 |
+| dino_move_right | 51.6 | 52.1 | 51.8 | **58.8** | 53.7 | |
+| scroll_when_key | 41 | 40 | 42 | 40 | 36 | 44 |
+| terrain_changed | 88.9 | 90.0 | 90.5 | 91.0 | **92.8** | |
+
+- **H19 refuted:** without the revealed-cell weight, continuity is the same (73.9 vs 73.9). The memory didn't need that push.
+- **More training helps the transformer most:** 3 more epochs (5 in total) took continuity from 73.9 to 78.9 with screen positions only, the best score so far and with no help from code, plus the best dino moves (58.8). The transformer was undertrained at 2 epochs. Caveat: the CNN control got only 2 epochs.

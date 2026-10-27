@@ -129,6 +129,19 @@ def evaluate(model, data: Frames, batch_size=64) -> dict[str, float]:
     return summarize(totals)
 
 
+MOVES4 = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+
+
+def scroll_of(last: torch.Tensor, nxt: torch.Tensor) -> torch.Tensor:
+    """int [B, 2]: the view's move (dy, dx) between two terrain frames, as tlfp.moves.find_scroll"""
+    errs = [(nxt[:, 1:-1, 1:-1] != last[:, 1:-1, 1:-1]).float().mean((1, 2))]
+    for dy, dx in MOVES4:
+        shifted = torch.roll(last, (-dy, -dx), (1, 2))
+        errs.append((nxt[:, 1:-1, 1:-1] != shifted[:, 1:-1, 1:-1]).float().mean((1, 2)))
+    table = torch.tensor([(0, 0)] + MOVES4, device=last.device)
+    return table[torch.stack(errs, 1).argmin(1)]
+
+
 def revealed_cells(last: torch.Tensor, nxt: torch.Tensor) -> torch.Tensor:
     """bool [B,45,45]: the row/column a scroll brings into view (H19). The scroll (dy, dx) is the shift
     where nxt[y, x] best matches last[y+dy, x+dx] (as tlfp.moves.find_scroll); none -> nothing revealed"""
@@ -147,7 +160,48 @@ def revealed_cells(last: torch.Tensor, nxt: torch.Tensor) -> torch.Tensor:
     return out
 
 
-def step_loss(model, args, context, keys, target, fate, clean_last=None, level=None):
+@torch.no_grad()
+def own_terrain(model, context, keys):
+    """the model's own next terrain, decoded like a rollout: most likely type, but lava and its
+    neighbours rolled from the probabilities (Gumbel trick: a random draw in one argmax)"""
+    t = model.forward_parts(context, keys)[0]
+    last = context[:, -1, 0]
+    lava = last == 6
+    near = lava.clone()
+    near[:, 1:] |= lava[:, :-1]; near[:, :-1] |= lava[:, 1:]; near[:, :, 1:] |= lava[:, :, :-1]; near[:, :, :-1] |= lava[:, :, 1:]
+    g = -torch.log(-torch.log(torch.rand_like(t).clamp(1e-9, 1 - 1e-9)))
+    return torch.where(near, (t + g).argmax(1), t.argmax(1))
+
+
+def unrolled_batch(model, data, rows, n):
+    """own-rollout training (pushforward): from real frames at each row, the model plays n ticks on
+    its own terrain (entities stay real; no gradients), and the batch for tick n+1 is returned with
+    the model's own terrain in its context and the real frame as the target"""
+    preds, shift, prev = [], None, None
+    for i in range(n + 1):
+        context, keys, target, *fate = data.batch(rows + i)
+        real_last = context[:, -1, 0]
+        if prev is not None:  # total real scroll since the start of the unroll
+            shift = shift + scroll_of(prev, real_last)
+        else:
+            shift = torch.zeros(len(rows), 2, dtype=torch.long, device=context.device)
+        prev = real_last
+        context = context.clone()
+        for j in range(1, min(len(preds), context.shape[1]) + 1):
+            context[:, -j, 0] = preds[-j]
+        if i == n:
+            # only cells the real game had already shown at the start can be scored: cells scrolled in
+            # since then are unknowable, and scoring them would teach averaging (smear)
+            shift = shift + scroll_of(real_last, target[:, 0])
+            y = torch.arange(45, device=context.device)
+            ok_y = ((y[None] + shift[:, :1]) >= 0) & ((y[None] + shift[:, :1]) < 45)
+            ok_x = ((y[None] + shift[:, 1:]) >= 0) & ((y[None] + shift[:, 1:]) < 45)
+            known = ok_y[:, :, None] & ok_x[:, None, :]
+            return context, keys, target, fate[0] if fate else None, known
+        preds.append(own_terrain(model, context, keys))
+
+
+def step_loss(model, args, context, keys, target, fate, clean_last=None, level=None, known=None):
     """loss for one batch of next-frame predictions -> (loss, terrain, entity, fate or None)"""
     loss_f = None
     hide = None
@@ -171,6 +225,8 @@ def step_loss(model, args, context, keys, target, fate, clean_last=None, level=N
         w[:, 0] = w[:, 0] * (1 + (args.revealed_weight - 1) * revealed_cells(last_t, target[:, 0]).float())
     ce_t = F.cross_entropy(t_logits, target[:, 0], reduction="none")
     wt = w[:, 0] * hide if hide is not None else w[:, 0]  # diffusion: score only the hidden cells
+    if known is not None:  # own-rollout training: terrain the game had already shown
+        wt = wt * known
     loss_t = (ce_t * wt).sum() / wt.sum().clamp(min=1)
     if args.split_entity:
         # "what's here" is scored everywhere; facing and level only where there is a dino.
@@ -233,6 +289,7 @@ def main():
     p.add_argument("--no-wandb", action="store_true")
     p.add_argument("--out-dir", default="checkpoints", help="where checkpoints go (Colab: a Google Drive folder)")
     p.add_argument("--device", default=None, help="force cuda / mps / cpu")
+    p.add_argument("--unroll", type=int, default=0, help="own-rollout training: up to N ticks on the model's own terrain")
     p.add_argument("--resume", default=None, help="continue from a -last checkpoint (weights, optimizer, step)")
     p.add_argument("--amp", action="store_true", help="CUDA only: bfloat16 mixed precision (faster)")
     p.add_argument("--name", default=None)
@@ -303,6 +360,13 @@ def main():
                 context, keys, target, *fate = train.batch(order[b * args.batch:(b + 1) * args.batch])
                 fate = fate[0] if fate else None
                 model.rel = train.batch_rel
+                if args.unroll:  # own-rollout training: a random length 0..unroll per batch (0 = as before)
+                    n = int(torch.randint(args.unroll + 1, (1,)))
+                    rows = order[b * args.batch:(b + 1) * args.batch]
+                    rows = rows[(rows + n < len(train)) & (train.ep[rows] == train.ep[(rows + n).clamp(max=len(train) - 1)])]
+                    known = None
+                    if n and len(rows):
+                        context, keys, target, fate, known = unrolled_batch(model, train, rows, n)
             if args.corrupt and not args.recurrent:
                 clean_last = context[:, -1]
                 context, level = corrupt(context, args.corrupt, args.corrupt_max, with_rate=True)
@@ -331,7 +395,8 @@ def main():
                 with torch.autocast("cuda", dtype=amp_dtype, enabled=amp):
                     loss, loss_t, loss_e, loss_f = step_loss(model, args, context, keys, target, fate,
                                                              clean_last if args.corrupt else None,
-                                                             level if args.corrupt else None)
+                                                             level if args.corrupt else None,
+                                                             known if args.unroll else None)
             opt.zero_grad()
             scaler.scale(loss).backward()
             if args.clip:
@@ -350,6 +415,7 @@ def main():
             if run and step % 20 == 0:
                 run.log({"train/loss": loss.item(), "train/loss_terrain": loss_t.item(),
                          **({f"train/loss_chunk{i + 1}": v for i, v in enumerate(chunk_losses)} if args.recurrent else {}),
+                         **({"train/unroll": n} if args.unroll else {}),
                          "train/loss_entity": loss_e.item(), **({"train/loss_fate": loss_f.item()} if args.fates else {}), "train/lr": lr_at(step),
                          "epoch": step / steps_per_epoch}, step=step)
             if step % eval_every == 0:
