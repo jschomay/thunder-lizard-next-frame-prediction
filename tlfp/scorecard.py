@@ -85,8 +85,9 @@ def one_step(model, data, dev) -> dict:
     c = dict.fromkeys(["tc", "tn", "pm", "pn", "ob", "on", "dm", "dn", "dp", "dall"], 0)
     near = np.zeros((2, 3))
     yy, xx = np.mgrid[0:45, 0:45]
-    for i in range(0, len(data), 256):
-        ctx, keys, tgt, fate = data.batch(torch.arange(i, min(i + 256, len(data)), device=dev))
+    bs = 32 if getattr(model, "memory", None) is not None else 256  # transformer: keep memory use small
+    for i in range(0, len(data), bs):
+        ctx, keys, tgt, fate = data.batch(torch.arange(i, min(i + bs, len(data)), device=dev))
         if getattr(model, "diffuse", False):  # H16: the full few-pass decode, argmax everywhere
             pt, _, (t, _, f) = diffuse_terrain(model, ctx, keys)
             pf = f.argmax(1)
@@ -165,9 +166,10 @@ def main():
     p.add_argument("--steps", type=int, default=4, help="diffusion passes per frame (H16/H17)")
     p.add_argument("--temp", type=float, default=0.0, help="diffusion: draw every terrain cell at this temperature (0 = argmax)")
     p.add_argument("--order-noise", type=float, default=0.0, help="diffusion: randomness in which cells are fixed first (MaskGIT)")
+    p.add_argument("--device", default=None, help="cpu for transformer models (MPS runs out of shared memory)")
     p.add_argument("--no-wandb", action="store_true")
     args = p.parse_args()
-    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    dev = args.device or ("mps" if torch.backends.mps.is_available() else "cpu")
     ck = torch.load(args.checkpoint, map_location="cpu")
     c = ck["config"]
     model = build_model(c).eval()

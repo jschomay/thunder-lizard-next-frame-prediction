@@ -754,3 +754,21 @@ Not tried: rollouts at a small damage level (GameNGen used one), damage on terra
 - **Speed in the browser (WebGPU, untrained branch alone):** 9×9 patches 48 ms per tick (~64 ms with the CNN: fits the 70 ms tick); 5×5 patches 145 ms (doesn't). → 9×9 patches.
 - **Colab (free T4):** training now supports CUDA, fp16 mixed precision with loss scaling, `--out-dir` (Google Drive), saving `-last` with optimizer state at every evaluation, and `--resume`. Notebook: `colab/train_transformer.ipynb`. Data + starting checkpoint: a 16.5 MB zip (1.15 GB unpacked; the grids compress ~70×).
 - Replaced `F.fold/unfold` with reshapes (same result, exports to ONNX).
+
+**First results (2026-10-27).** Transformer: 2 epochs on Colab (T4 for the first quarter epoch at 1.06 s/step, then an A100 at ~0.05 s/step, about 20× faster thanks to bfloat16 + fast attention; resumed from Drive). Control: the CNN with the same data and revealed-cell ×10, 2 epochs on the Mac (~25 min). 24 rollout games, real values on the right.
+
+| | best-so-far line (more2) | CNN control | **transformer** | real |
+|---|---|---|---|---|
+| continuity | 70.2 | 71.8 | **73.9** | ~95 |
+| share_mean (smear) | 42.1 | 41.2 | **40.3** | 40.2 |
+| static % | 0.100 | **0.082** | 0.109 | 0.02 |
+| terrain_changed (one step) | 88.1 | 88.9 | **90.0** | |
+| dino_move_right | 48.9 | 51.6 | **52.1** | |
+| dinos per frame | 1.25 | 1.43 | 1.36 | ~1.5 |
+| scroll_when_key | 41 | 41 | 40 | 44 |
+
+- The memory branch is used (its output layer grew from 0 to a weight norm of 13), and one-step validation improves ~1 point (dynamic 80.6 vs 79.4).
+- **Continuity +2.1 over the control**, far from the ≥80 target. Smear is now at the real level. Stray cells slightly worse.
+- The control alone (backtrack data + revealed ×10) beat the old best on nearly everything: the data and weighting help without memory.
+- H19 isn't separated yet: both runs used the revealed weighting.
+- **H18: 🟡 small gain.** Next: look at what newly revealed patches attend to, to see whether the net finds the old view at all.
