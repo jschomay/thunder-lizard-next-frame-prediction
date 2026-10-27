@@ -154,13 +154,16 @@ class MemoryBranch(nn.Module):
         cols = (c[None, :].expand(g, g).reshape(-1) + rel[..., 1:]).clamp(-WORLD_PAD, 44 + WORLD_PAD) + WORLD_PAD
         return self.wrow(rows) + self.wcol(cols)
 
-    def tokens(self, context, keys, rel=None):
-        """all tokens: history patches then the next-frame queries, [B, (T+1)*n, d]"""
-        B, T = context.shape[:2]
-        oh = torch.cat([F.one_hot(context[:, :, 0], N_TERRAIN), F.one_hot(context[:, :, 1], N_ENTITY)], -1)
-        f = self.stem(oh.permute(0, 1, 4, 2, 3).reshape(B * T, -1, 45, 45).float())
+    def tokens(self, context, keys, rel=None, oh=None):
+        """all tokens: history patches then the next-frame queries, [B, (T+1)*n, d].
+        oh: the same frames already one-hot, float [B, T, 50, 45, 45] (the browser builds it)"""
+        if oh is None:
+            oh = torch.cat([F.one_hot(context[:, :, 0], N_TERRAIN), F.one_hot(context[:, :, 1], N_ENTITY)], -1)
+            oh = oh.permute(0, 1, 4, 2, 3).float()
+        B, T = oh.shape[:2]
+        f = self.stem(oh.reshape(B * T, -1, 45, 45))
         if self.world:
-            rel = torch.zeros(B, T, 2, dtype=torch.long, device=context.device) if rel is None else rel
+            rel = torch.zeros(B, T, 2, dtype=torch.long, device=oh.device) if rel is None else rel
             pos, qpos = self.world_pos(rel), self.world_pos(torch.zeros_like(rel[:, :1]))[:, 0]
         else:
             pos, qpos = self.pos, self.pos
@@ -168,8 +171,8 @@ class MemoryBranch(nn.Module):
         q = (self.query + qpos + self.age[T] + self.key(keys)[:, None]).reshape(B, 1, self.n, -1)
         return torch.cat([tok, q], 1).flatten(1, 2)
 
-    def forward(self, context, keys, rel=None):
-        x = self.tf(self.tokens(context, keys, rel))[:, -self.n:]   # read the query tokens
+    def forward(self, context, keys, rel=None, oh=None):
+        x = self.tf(self.tokens(context, keys, rel, oh))[:, -self.n:]   # read the query tokens
         return self.unpatch(self.out(x))
 
 

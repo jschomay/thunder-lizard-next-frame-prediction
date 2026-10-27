@@ -24,7 +24,8 @@ const DINO_COLOR = ["#69A1B5", "#A1663B", "#E2A651", "#C94A24", "#79547D"];
 const PLAYER_COLOR = "#eee";
 
 let session, SEEDS, K, DINO_W;
-let hist = [];            // last K frames: {t: Uint8Array, e: Uint8Array}
+let OFFSETS = null, WORLD = false, MAXH = 4;  // memory models (H18): frame ages they read; world positions
+let hist = [];            // recent frames, oldest first: {t, e, o: view origin [y, x]}
 let world = [0, 0];       // accumulated scroll, so each terrain cell keeps its glyph as it scrolls
 let held = [];            // arrow keys currently held, most recent last
 let running = false, busy = false, dead = false, tickNo = 0;
@@ -45,6 +46,8 @@ const canvas = $("screen"), g = canvas.getContext("2d");
       createSession(),
     ]);
     SEEDS = seeds.seeds; K = seeds.k; DINO_W = seeds.dino_weight; session = s;
+    if (seeds.offsets && seeds.offsets.length > K) { OFFSETS = seeds.offsets; WORLD = !!seeds.world; }
+    MAXH = OFFSETS ? Math.max(...OFFSETS) + 1 : K;
     reset();
     $("otitle").textContent = "Ready";
     $("otext").textContent = "You are the white ① in the middle. Arrow keys to move. The first four frames come from a real game; everything after that is the net's imagination.";
@@ -72,7 +75,7 @@ function reset() {
   let i; do { i = Math.floor(Math.random() * SEEDS.length); } while (SEEDS.length > 1 && i === seedIdx);
   seedIdx = i;
   const sd = SEEDS[seedIdx];
-  hist = sd.frames.map(([t, e]) => ({ t: Uint8Array.from(t), e: Uint8Array.from(e) }));
+  hist = sd.frames.map(([t, e]) => ({ t: Uint8Array.from(t), e: Uint8Array.from(e), o: [0, 0] }));
   world = [0, 0]; dead = false; tickNo = 0;
   draw(hist[hist.length - 1]);
 }
@@ -113,7 +116,8 @@ async function tick() {
   const t1 = performance.now();
   const next = applyPredictions(out);
   stats.applyMs = performance.now() - t1;
-  hist.push(next); hist.shift(); tickNo++;
+  next.o = [world[0], world[1]];
+  hist.push(next); if (hist.length > MAXH) hist.shift(); tickNo++;
   draw(next);
   record(ms);
   busy = false;
@@ -122,22 +126,35 @@ async function tick() {
 
 async function runModel(key) {
   const x = new Float32Array((K * 50 + 5) * CELLS);
+  const recent = hist.slice(-K);
   for (let f = 0; f < K; f++) {
-    const { t, e } = hist[f], base = f * 50 * CELLS;
+    const { t, e } = recent[f], base = f * 50 * CELLS;
     for (let i = 0; i < CELLS; i++) {
       x[base + t[i] * CELLS + i] = 1;
       x[base + (NT + e[i]) * CELLS + i] = 1;
     }
   }
   x.fill(1, (K * 50 + key) * CELLS, (K * 50 + key + 1) * CELLS);
-  const last = hist[K - 1];
+  const last = hist[hist.length - 1];
   const lt = new Float32Array(NT * CELLS), le = new Float32Array(NE * CELLS);
   for (let i = 0; i < CELLS; i++) { lt[last.t[i] * CELLS + i] = 1; le[last.e[i] * CELLS + i] = 1; }
-  const r = await session.run({
+  const feeds = {
     x: new ort.Tensor("float32", x, [1, K * 50 + 5, N, N]),
     last_t: new ort.Tensor("float32", lt, [1, NT, N, N]),
     last_e: new ort.Tensor("float32", le, [1, NE, N, N]),
-  });
+  };
+  if (OFFSETS) {  // H18: the long history the memory reads (missing old frames repeat the oldest)
+    const T = OFFSETS.length, h = new Float32Array(T * 50 * CELLS), rel = new BigInt64Array(T * 2);
+    OFFSETS.forEach((a, j) => {
+      const fr = hist[Math.max(0, hist.length - 1 - a)], base = j * 50 * CELLS;
+      for (let i = 0; i < CELLS; i++) { h[base + fr.t[i] * CELLS + i] = 1; h[base + (NT + fr.e[i]) * CELLS + i] = 1; }
+      rel[2 * j] = BigInt(fr.o[0] - last.o[0]); rel[2 * j + 1] = BigInt(fr.o[1] - last.o[1]);
+    });
+    feeds.hist = new ort.Tensor("float32", h, [1, T, 50, N, N]);
+    feeds.key = new ort.Tensor("int64", BigInt64Array.from([BigInt(key)]), [1]);
+    if (WORLD) feeds.rel = new ort.Tensor("int64", rel, [1, T, 2]);
+  }
+  const r = await session.run(feeds);
   return { terrain: r.terrain.data, entity: r.entity.data, fate: r.fate.data };
 }
 
@@ -171,7 +188,7 @@ function findScroll(a, b) {
 }
 
 function applyPredictions({ terrain, entity, fate }) {
-  const last = hist[K - 1];
+  const last = hist[hist.length - 1];
   // terrain: most likely class, but lava and its neighbours roll dice (spreading and burning out
   // are per-cell dice rolls in the real game)
   const t = new Uint8Array(CELLS);

@@ -32,9 +32,11 @@ class Exported(nn.Module):
         super().__init__()
         self.m = m
 
-    def forward(self, x, last_t, last_e, draft=None):
+    def forward(self, x, last_t, last_e, draft=None, hist=None, key=None, rel=None):
         m = self.m
         h = m.body(x)
+        if m.memory is not None:  # H18: hist = one-hot history frames (oldest first), rel = world offsets
+            h = h + m.memory(None, key, rel, oh=hist)
         if m.diffuse:  # H16: draft = one-hot terrain + unknown (9) and the unknown share (1)
             h = h + m.draft_in(draft)
         if m.unet:
@@ -75,20 +77,35 @@ def main(path: str):
     lt = F.one_hot(ctx[:, -1, 0], 8).permute(0, 3, 1, 2).float()
     le = F.one_hot(ctx[:, -1, 1], 42).permute(0, 3, 1, 2).float()
     dr = torch.cat([F.one_hot(torch.full((1, 45, 45), 8), 9).permute(0, 3, 1, 2).float(), torch.ones(1, 1, 45, 45)], 1)
-    args = (x, lt, le, dr) if model.diffuse else (x, lt, le)
-    names = ["x", "last_t", "last_e"] + (["draft"] if model.diffuse else [])
+    args, names = (x, lt, le), ["x", "last_t", "last_e"]
+    if model.diffuse:
+        args, names = args + (dr,), names + ["draft"]
+    feeds = lambda: list(args) + list(kw.values())  # every input, in input_names order
+    if model.memory is not None:
+        ctx = torch.from_numpy(np.array([[[np.array(f[0]).reshape(45, 45), np.array(f[1]).reshape(45, 45)]
+                                           for f in seeds[0]["frames"]]])).long()
+        ctx = ctx[:, [max(0, ctx.shape[1] - 1 - a) for a in model.offsets]]  # the frames the memory reads
+        hist = torch.cat([F.one_hot(ctx[:, :, 0], 8), F.one_hot(ctx[:, :, 1], 42)], -1).permute(0, 1, 4, 2, 3).float()
+        rel = torch.zeros(1, len(model.offsets), 2, dtype=torch.long)
+        model.rel = rel
+        kw = {"hist": hist, "key": key} | ({"rel": rel} if model.memory.world else {})
+        names = names + list(kw)
+        ctx_full = ctx
+    else:
+        kw = {}
     with torch.no_grad():
-        ours = wrap(*args)
-        t, ep, f = model.forward_parts(ctx, key)
+        ours = wrap(*args, **kw)
+        t, ep, f = model.forward_parts(ctx_full if model.memory is not None else ctx, key)
     assert all(torch.allclose(a, b, atol=1e-4) for a, b in zip(ours, (t, combine(*ep), f)))
 
     APP.mkdir(exist_ok=True)
-    torch.onnx.export(wrap, args, APP / "model.onnx", input_names=names,
+    torch.onnx.export(wrap, args + ((kw,) if kw else ()), APP / "model.onnx", input_names=names,
                       output_names=["terrain", "entity", "fate"], opset_version=17, dynamo=False)
     import onnxruntime as ort
-    out = ort.InferenceSession(str(APP / "model.onnx")).run(None, dict(zip(names, (a.numpy() for a in args))))
+    out = ort.InferenceSession(str(APP / "model.onnx")).run(None, {n: a.numpy() for n, a in zip(names, feeds())})
     assert all(np.allclose(a, b.numpy(), atol=1e-3) for a, b in zip(out, ours)), "onnx output differs"
-    (APP / "seeds.json").write_text(json.dumps({"run": c.get("name"), "k": model.k,
+    (APP / "seeds.json").write_text(json.dumps({"run": c.get("name"), "k": model.k, "offsets": model.offsets,
+                                                "world": bool(model.memory is not None and model.memory.world),
                                                 "dino_weight": c.get("dino_weight", 1.0), "seeds": seeds}))
     print(f"wrote {APP / 'model.onnx'} ({(APP / 'model.onnx').stat().st_size / 1e6:.1f} MB), "
           f"{len(seeds)} seeds; onnx output matches torch")
