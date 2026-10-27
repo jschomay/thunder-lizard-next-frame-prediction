@@ -274,6 +274,7 @@ def main():
         print(f"start        val dynamic {m['dynamic_acc']:.2%}  changed {m['changed_acc']:.2%}  exact {m['exact_frame_acc']:.2%}")
         if run:
             run.log({f"val/{k}": v for k, v in m.items()}, step=0)
+    t_loop, step0 = time.time(), step  # for the speed estimate (excludes setup and the start evaluation)
     for epoch in range(step // steps_per_epoch, args.epochs):
         order = torch.randperm(len(starts) if args.recurrent else len(train), device=device)
         for b in range(step % steps_per_epoch if epoch == step // steps_per_epoch else 0, steps_per_epoch):
@@ -319,9 +320,9 @@ def main():
             if args.recurrent:
                 model.carry, model.state = False, None
             step += 1
-            if b == 20 or (args.max_steps and step == args.max_steps):
-                print(f"speed: {(time.time() - t0) / 21:.2f} s/step (incl. setup) -> roughly "
-                      f"{(time.time() - t0) / 21 * steps_per_epoch / 60:.0f} min/epoch")
+            if step - step0 in (20, 100):
+                sps = (time.time() - t_loop) / (step - step0)
+                print(f"speed: {sps:.2f} s/step -> roughly {sps * steps_per_epoch / 60:.0f} min/epoch")
             if args.max_steps and step >= args.max_steps:
                 break
             if run and step % 20 == 0:
