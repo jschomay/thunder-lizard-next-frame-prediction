@@ -59,12 +59,23 @@ Every model is compared on a fixed **scorecard** ([`tlfp/scorecard.py`](tlfp/sco
 - **Dino movement.**
 - **Speed:** milliseconds per frame.
 
+<p align="center">
+  <img src="media/wandb-parallel-coordinates.png" width="800" alt="Weights & Biases parallel-coordinates chart comparing runs across settings and scorecard metrics">
+  <br><em>Each line is one training run (Weights & Biases), traced from its settings on the left to its scorecard on the right. Colour is continuity. Improving one score often cost another.</em>
+</p>
+
 ## What we learned
 
 The net imagines the game well for a few seconds: movement, scrolling, lava and dinos all work. **What it can't do is stay coherent while you travel.** After you move some distance, the terrain smears and places you come back to have changed. Every attempt to fix that (diffusion, recurrent memory, a transformer with long history, training on its own rollouts) improved the scorecard but didn't change how it plays.
 
 In hindsight:
 - **Measure what you feel, first.** One-step accuracy and short rollouts kept saying "better" while playing said "same". A score for long walks came last; it should have come first.
+
+<p align="center">
+  <img src="media/wandb-dynamic-acc.png" width="640" alt="Validation accuracy curves for ten runs, mostly rising over training">
+  <br><em>Accuracy on predicting a single frame from real ones kept climbing run after run. How the game felt to play barely moved.</em>
+</p>
+
 - **Train longer.** Most runs got 2–3 epochs because they ran on a laptop. On a cloud GPU (Colab A100) the CNN trains an epoch in about a minute, and more epochs were the most reliable gain we found.
 - **Stability before memory.** Remembering doesn't help if what you remember is already smeared.
 - **Scale.** This is ~200k frames and up to 6M parameters. GameNGen used 900M frames and 860M parameters and still held only ~3 seconds of memory. Long-horizon coherence is an open problem for much bigger models too.
