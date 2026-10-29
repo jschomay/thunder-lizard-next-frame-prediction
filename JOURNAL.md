@@ -794,3 +794,39 @@ Not tried: rollouts at a small damage level (GameNGen used one), damage on terra
 
 - **H19 refuted:** without the revealed-cell weight, continuity is the same (73.9 vs 73.9). The memory didn't need that push.
 - **More training helps the transformer most:** 3 more epochs (5 in total) took continuity from 73.9 to 78.9 with screen positions only, the best score so far and with no help from code, plus the best dino moves (58.8). The transformer was undertrained at 2 epochs. Caveat: the CNN control got only 2 epochs.
+
+## 2026-10-29 — Own-rollout training, and closing the experiment
+
+**Long-walk score (new):** 300 ticks on its own with a real game's keys; terrain edges (smear erases them) and the terrain-type mix, last 50 ticks vs the real game. Checked first on the live model: edges 8.73 → 6.85 (real 8.69 → 8.45), mix drift 31 — the score shows the decay Jeff sees.
+
+**Own-rollout training (`--unroll N`, pushforward):** the model plays N−1 ticks on its own terrain (no gradients; entities stay real), then tick N is scored against the real frame, **only on cells the game had already shown** (scoring newly scrolled-in cells would reward averaging). Measured on the trained CNN first: after 8 own ticks its frame differs from the real one in 4.2% of cells and the loss is 8× the one-step loss.
+
+Colab A100, CNN, 4 epochs each from the backtrack CNN (24 games; walk = 10 games × 300 ticks):
+
+| | live | **u0 (ordinary)** | u8 | u16 | real |
+|---|---|---|---|---|---|
+| walk edges late | 6.85 | **7.91** | 6.07 | 6.02 | 8.45 |
+| walk mix drift | 30.9 | 24.7 | 18.2 | **17.7** | 0 |
+| continuity | 70.2 | 76.7 | **78.0** | 75.6 | ~95 |
+| scroll_when_key | 41 | **42** | 37 | 35 | 44 |
+| terrain_changed | 88.1 | **90.6** | 87.3 | 83.9 | |
+| A100 time | | 4 min | 9 min | 14 min | |
+
+- Own-rollout training kept the terrain mix closer to real but smoothed edges, scrolled less and lost one-step skill. Ordinary training for longer was the best on paper.
+- **Jeff's play-test (u0, u8, live):** "all about equal, maybe the new ones are better than the old … but none have consistency, all have smear."
+
+## Retrospective
+
+**What worked:** a 0.6M-parameter CNN plays the game in the browser at ~16 ms per frame. Movement, scrolling, lava and dinos work over short stretches. The key structural wins were history (H3), copy-by-default (H10), split entity heads (H11) and dino fates (H13).
+
+**What didn't:** staying coherent while travelling. Diffusion (H16), recurrence (H15), a transformer memory with screen or world positions (H18), damage training (H8) and own-rollout training all moved the scorecard; none changed how it plays.
+
+**What I'd set up differently:**
+1. **Measure what is felt, from the start.** One-step and short-rollout scores kept saying "better" while play said "same" (H7). The long-walk score was built last; it should have been first, and even it only partly matches feel.
+2. **Train longer, earlier.** Most runs were 2–3 epochs because each cost ~20 min on the Mac; on the A100 the CNN takes ~1 min per epoch, and extra epochs were the most reliable gain we found (transformer 2 → 5 epochs: continuity 73.9 → 78.9; CNN +4 epochs: 71.8 → 76.7).
+3. **Stability before memory.** Remembering doesn't help when the frames being remembered are already smeared.
+4. **Scale:** ~200k bot frames and 0.6–6M parameters, against GameNGen's 900M frames and 860M parameters. Long-horizon coherence is the field's open problem; GameNGen holds ~3 s, and only very recent large models hold minutes.
+
+**Not tried:** much longer training on the A100 (it's cheap now), GameNGen's noise-level trick at full strength (large damage on every example), a learned discriminator ("does this look like the game?"), and human play data (H6).
+
+**Experiment closed.** The live app stays on best-so-far unless Jeff decides to ship u0.

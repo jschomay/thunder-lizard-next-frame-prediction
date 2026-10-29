@@ -48,7 +48,8 @@ Some highlights so far:
 | A recurrent memory (ConvGRU) for continuity | 🔴 no gain: training barely rewards remembering |
 | Masked diffusion, drawing each frame in passes | 🔴 1–2 points at 4× the compute |
 | Damaging the input frames during training (GameNGen-style) | 🟡 fewer stray cells, but dinos got worse |
-| A transformer with long history | 🟡 next up |
+| A transformer reading 128 ticks of history | 🟡 better scores (continuity 70 → 79), no difference in play |
+| Training on the model's own rollouts | 🔴 traded smear for smoothing; no difference in play |
 
 Every model is compared on a fixed **scorecard** ([`tlfp/scorecard.py`](tlfp/scorecard.py)) of things that matter for play, not just accuracy:
 - **Continuity:** walk away and come back. Is it the same place?
@@ -58,7 +59,17 @@ Every model is compared on a fixed **scorecard** ([`tlfp/scorecard.py`](tlfp/sco
 - **Dino movement.**
 - **Speed:** milliseconds per frame.
 
-The biggest open gap is **continuity**: the model forgets places once they scroll off screen (70% vs 95% in the real game).
+## What we learned
+
+The net imagines the game well for a few seconds: movement, scrolling, lava and dinos all work. **What it can't do is stay coherent while you travel.** After you move some distance, the terrain smears and places you come back to have changed. Every attempt to fix that (diffusion, recurrent memory, a transformer with long history, training on its own rollouts) improved the scorecard but didn't change how it plays.
+
+In hindsight:
+- **Measure what you feel, first.** One-step accuracy and short rollouts kept saying "better" while playing said "same". A score for long walks came last; it should have come first.
+- **Train longer.** Most runs got 2–3 epochs because they ran on a laptop. On a cloud GPU (Colab A100) the CNN trains an epoch in about a minute, and more epochs were the most reliable gain we found.
+- **Stability before memory.** Remembering doesn't help if what you remember is already smeared.
+- **Scale.** This is ~200k frames and up to 6M parameters. GameNGen used 900M frames and 860M parameters and still held only ~3 seconds of memory. Long-horizon coherence is an open problem for much bigger models too.
+
+The full story, with every number and wrong turn, is in [JOURNAL.md](JOURNAL.md).
 
 ## Repo layout
 
@@ -84,6 +95,6 @@ uv run python -m tlfp.export_onnx checkpoints/my-run-last.pt
 cd app && python3 -m http.server
 ```
 
-Training runs on a Mac (Apple GPU) in about 20 minutes per 3 epochs. Runs are logged to Weights & Biases.
+The CNN trains on a Mac (Apple GPU) in about 20 minutes per 3 epochs. Transformer runs need a cloud GPU: [`colab/train_transformer.ipynb`](colab/train_transformer.ipynb) runs a list of experiments on Colab and scores them there. Runs are logged to Weights & Biases.
 
 Built with a lot of help from Claude (Claude Code).
