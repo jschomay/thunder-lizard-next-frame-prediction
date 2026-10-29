@@ -78,7 +78,7 @@ In hindsight:
 
 - **Train longer.** Most runs got 2–3 epochs because they ran on a laptop. On a cloud GPU (Colab A100) the CNN trains an epoch in about a minute, and more epochs were the most reliable gain we found.
 - **Stability before memory.** Remembering doesn't help if what you remember is already smeared.
-- **Scale.** This is ~200k frames and up to 6M parameters. GameNGen used 900M frames and 860M parameters and still held only ~3 seconds of memory. Long-horizon coherence is an open problem for much bigger models too.
+- **Scale.** This is ~200k frames, and models of 0.6M parameters (the CNN in the app) to 5.8M (the experimental transformer). GameNGen used 900M frames and 860M parameters and still held only ~3 seconds of memory. Long-horizon coherence is an open problem for much bigger models too.
 
 The full story, with every number and wrong turn, is in [JOURNAL.md](JOURNAL.md).
 
