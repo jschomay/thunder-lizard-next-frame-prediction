@@ -99,7 +99,20 @@ svg{max-width:100%;height:auto;display:block}svg text{font-family:system-ui,sans
 <li><b>H19:</b> the extra weight on revealed cells is needed for memory to be learned.</li>
 <li><b>After training:</b> this page will show what newly revealed patches <i>actually</i> attend to. If they look at the frame where the place was last seen, the memory works.</li>
 </ul>
-<div class="card" data-wb="results" id="results">Training on Colab. Results will go here.</div>
+<div class="card" data-wb="results" id="results">
+<p style="margin-top:0"><b>Results (2026-10-27/29).</b> 24 rollout games; long walk = 300 ticks alone, last 50 ticks.</p>
+<table>
+<tr><th></th><th>continuity</th><th>dino move right</th><th>stray cells</th><th>played</th></tr>
+<tr><td>CNN, same data (2 epochs)</td><td>71.8</td><td>51.6</td><td>0.082%</td><td>no better</td></tr>
+<tr><td>transformer, screen positions (2 epochs)</td><td>73.9</td><td>52.1</td><td>0.109%</td><td>no better</td></tr>
+<tr><td>… without revealed-cell weight (H19)</td><td>73.9</td><td>51.8</td><td>0.130%</td><td></td></tr>
+<tr><td>transformer, 5 epochs</td><td><b>78.9</b></td><td><b>58.8</b></td><td>0.100%</td><td>no better, slows over time</td></tr>
+<tr><td>transformer, world positions</td><td>77.8</td><td>53.7</td><td>0.116%</td><td>worse: smear</td></tr>
+<tr><td>CNN, 4 more epochs (u0)</td><td>76.7</td><td>55.2</td><td>0.103%</td><td>about equal</td></tr>
+<tr><td>real game</td><td>~95</td><td></td><td>0.02%</td><td></td></tr>
+</table>
+<p><b>Verdict: H18 🟡, H19 🔴.</b> The memory is used and moves the scores (mostly through more training: the CNN with more epochs caught up), but none of it shows in play. Own-rollout training (H20) didn't either. <b>Experiment closed</b>; see the retrospective at the end of the journal.</p>
+</div>
 </main>
 <script src="grid.js"></script>
 <script>
